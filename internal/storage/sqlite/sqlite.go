@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	sqlite3 "github.com/glebarez/go-sqlite"
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/storage"
-	sqlitelib "modernc.org/sqlite/lib"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type Storage struct {
@@ -19,8 +19,13 @@ type Storage struct {
 func New(storagePath string) (*Storage, error) {
 	const op = "storage.sqlite.New"
 
-	db, err := sql.Open("sqlite", storagePath)
+	db, err := sql.Open("sqlite", storagePath+"?_busy_timeout=5000")
 	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	if err := db.PingContext(context.Background()); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -38,9 +43,9 @@ func (s *Storage) SaveUser(ctx context.Context, email string, passHash []byte) (
 
 	res, err := stmt.ExecContext(ctx, email, passHash)
 	if err != nil {
-		var sqliteErr sqlite3.Error
+		var sqliteErr sqlite.Error
 
-		if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlitelib.SQLITE_CONSTRAINT_UNIQUE {
+		if sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
 			return 0, fmt.Errorf("%s: %w", op, storage.ErrUserExists)
 		}
 
@@ -64,14 +69,8 @@ func (s *Storage) User(ctx context.Context, email string) (models.User, error) {
 	}
 	defer stmt.Close()
 
-	row, err := stmt.QueryContext(ctx, email)
-	if err != nil {
-		return models.User{}, fmt.Errorf("%s: %w", op, err)
-	}
-	defer row.Close()
-
 	var user models.User
-	err = row.Scan(&user.ID, &user.Email, &user.PassHash)
+	err = stmt.QueryRowContext(ctx, email).Scan(&user.ID, &user.Email, &user.PassHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return models.User{}, fmt.Errorf("%s: %w", op, storage.ErrUserNotFound)
@@ -93,13 +92,7 @@ func (s *Storage) IsAdmin(ctx context.Context, userID int64) (bool, error) {
 	defer stmt.Close()
 
 	var isAdmin bool
-	row, err := stmt.QueryContext(ctx, userID)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", op, err)
-	}
-	defer row.Close()
-
-	err = row.Scan(&isAdmin)
+	err = stmt.QueryRowContext(ctx, userID).Scan(&isAdmin)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, fmt.Errorf("%s: %w", op, storage.ErrUserNotFound)
@@ -114,20 +107,14 @@ func (s *Storage) IsAdmin(ctx context.Context, userID int64) (bool, error) {
 func (s *Storage) App(ctx context.Context, appID int) (models.App, error) {
 	const op = "storage.sqlite.App"
 
-	stmt, err := s.db.Prepare("SELECT id, name, secret FROM users WHERE id = ?")
+	stmt, err := s.db.Prepare("SELECT id, name, secret FROM apps WHERE id = ?")
 	if err != nil {
 		return models.App{}, fmt.Errorf("%s: %w", op, err)
 	}
 	defer stmt.Close()
 
-	row, err := stmt.QueryContext(ctx, appID)
-	if err != nil {
-		return models.App{}, fmt.Errorf("%s: %w", op, err)
-	}
-	defer row.Close()
-
 	var app models.App
-	err = row.Scan(&app.ID, &app.Name, &app.Secret)
+	err = stmt.QueryRowContext(ctx, appID).Scan(&app.ID, &app.Name, &app.Secret)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return models.App{}, fmt.Errorf("%s: %w", op, storage.ErrAppNotFound)
@@ -137,4 +124,8 @@ func (s *Storage) App(ctx context.Context, appID int) (models.App, error) {
 	}
 
 	return app, nil
+}
+
+func (s *Storage) Close() error {
+	return s.db.Close()
 }

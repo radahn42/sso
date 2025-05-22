@@ -13,10 +13,11 @@ import (
 type App struct {
 	log        *slog.Logger
 	gRPCServer *grpc.Server
+	host       string
 	port       int
 }
 
-func New(log *slog.Logger, authService authgrpc.Auth, port int) *App {
+func New(log *slog.Logger, authService authgrpc.Auth, port int, host string) *App {
 	validator, err := protovalidate.New()
 	if err != nil {
 		panic(err)
@@ -32,6 +33,7 @@ func New(log *slog.Logger, authService authgrpc.Auth, port int) *App {
 		log:        log,
 		gRPCServer: gRPCServer,
 		port:       port,
+		host:       host,
 	}
 }
 
@@ -51,7 +53,7 @@ func (a *App) Run() error {
 		slog.Int("port", a.port),
 	)
 
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", a.port))
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", a.host, a.port))
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}

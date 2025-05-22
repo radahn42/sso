@@ -1,0 +1,7 @@
+env: "local" # prod
+storage_path: "./storage/sso.db"
+token_ttl: 1h
+grpc:
+  port: 44044
+  host: localhost
+  timeout: 10h

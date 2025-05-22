@@ -6,15 +6,16 @@ import (
 	"fmt"
 	"log"
 
-	_ "github.com/glebarez/go-sqlite"
 	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
-	var storagePath, migrationsPath string
+	var storagePath, migrationsPath, migrationsTable string
 
 	flag.StringVar(&storagePath, "storage-path", "", "path to SQLite storage")
 	flag.StringVar(&migrationsPath, "migrations-path", "", "path to SQL migrations")
+	flag.StringVar(&migrationsTable, "migrations-table", "goose_db_version", "name of migrations table")
 	flag.Parse()
 
 	if storagePath == "" {
@@ -29,6 +30,8 @@ func main() {
 		panic("failed to open database")
 	}
 	defer db.Close()
+
+	goose.SetTableName(migrationsTable)
 
 	if err := goose.Up(db, migrationsPath); err != nil {
 		if errors.Is(err, goose.ErrAlreadyApplied) {
