@@ -92,28 +92,6 @@ func TestLoginWithNonExistentApp_ShouldFail(t *testing.T) {
 	assert.Error(t, err, "error is expected when logging in with a non-existent app_id")
 }
 
-func TestLoginWithWrongPassword_ShouldFail(t *testing.T) {
-	ctx, st := suite.New(t)
-
-	email := gofakeit.Email()
-	password := randomFakePassword()
-
-	respReg, err := st.AuthClient.Register(ctx, &ssov1.RegisterRequest{
-		Email:    email,
-		Password: password,
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, respReg.GetUserId())
-
-	_, err = st.AuthClient.Login(ctx, &ssov1.LoginRequest{
-		Email:    email,
-		Password: "wrong-password",
-		AppId:    appID,
-	})
-
-	assert.Error(t, err, "error is expected when logging in with an invalid password")
-}
-
 func TestRegisterExistingUser_ShouldFail(t *testing.T) {
 	ctx, st := suite.New(t)
 
@@ -132,6 +110,100 @@ func TestRegisterExistingUser_ShouldFail(t *testing.T) {
 	})
 
 	assert.Error(t, err, "error is expected when re-registering with the same email address")
+}
+
+func TestRegister_FailCases(t *testing.T) {
+	ctx, st := suite.New(t)
+
+	tests := []struct {
+		name        string
+		email       string
+		password    string
+		expectedErr string
+	}{
+		{
+			name:        "Register with Empty Password",
+			email:       gofakeit.Email(),
+			password:    "",
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - password: value length must be at least 8 characters [string.min_len]",
+		},
+		{
+			name:        "Register with Empty Email",
+			email:       "",
+			password:    randomFakePassword(),
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - email: value is empty, which is not a valid email address [string.email_empty]",
+		},
+		{
+			name:        "Register with Both Empty",
+			email:       "",
+			password:    "",
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - email: value is empty, which is not a valid email address [string.email_empty]\n - password: value length must be at least 8 characters [string.min_len]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := st.AuthClient.Register(ctx, &ssov1.RegisterRequest{
+				Email:    tt.email,
+				Password: tt.password,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedErr)
+		})
+	}
+}
+
+func TestLogin_FailCases(t *testing.T) {
+	ctx, st := suite.New(t)
+
+	tests := []struct {
+		name        string
+		email       string
+		password    string
+		appID       int32
+		expectedErr string
+	}{
+		{
+			name:        "Login with Empty Password",
+			email:       gofakeit.Email(),
+			password:    "",
+			appID:       appID,
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - password: value length must be at least 8 characters [string.min_len]",
+		},
+		{
+			name:        "Login with Empty Email",
+			email:       "",
+			password:    randomFakePassword(),
+			appID:       appID,
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - email: value is empty, which is not a valid email address [string.email_empty]",
+		},
+		{
+			name:        "Login with Wrong Password",
+			email:       gofakeit.Email(),
+			password:    randomFakePassword(),
+			appID:       appID,
+			expectedErr: "rpc error: code = InvalidArgument desc = invalid credentials",
+		},
+		{
+			name:        "Login with Both Empty",
+			email:       "",
+			password:    "",
+			appID:       appID,
+			expectedErr: "rpc error: code = InvalidArgument desc = validation error:\n - email: value is empty, which is not a valid email address [string.email_empty]\n - password: value length must be at least 8 characters [string.min_len]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := st.AuthClient.Login(ctx, &ssov1.LoginRequest{
+				Email:    tt.email,
+				Password: tt.password,
+				AppId:    tt.appID,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedErr)
+		})
+	}
 }
 
 func randomFakePassword() string {

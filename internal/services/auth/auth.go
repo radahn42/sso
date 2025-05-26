@@ -17,27 +17,42 @@ var (
 	ErrInvalidAppID       = errors.New("invalid app id")
 	ErrUserExists         = errors.New("user already exists")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrInvalidToken       = errors.New("invalid token")
+	ErrTokenExpired       = errors.New("token expired")
 )
-
-type Auth struct {
-	log         *slog.Logger
-	usrSaver    UserSaver
-	usrProvider UserProvider
-	appProvider AppProvider
-	tokenTTL    time.Duration
-}
 
 type UserSaver interface {
 	SaveUser(ctx context.Context, email string, passHash []byte) (uid int64, err error)
+	UpdateUser(ctx context.Context, user models.User) error
 }
 
 type UserProvider interface {
 	User(ctx context.Context, email string) (models.User, error)
-	IsAdmin(ctx context.Context, userID int64) (bool, error)
+	UserByID(ctx context.Context, userID int64) (models.User, error)
 }
 
 type AppProvider interface {
 	App(ctx context.Context, appID int) (models.App, error)
+	AppByName(ctx context.Context, name string) (models.App, error)
+}
+
+type RoleProvider interface {
+	UserRoles(ctx context.Context, userID int64) ([]models.Role, error)
+}
+
+type PermissionProvider interface {
+	UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error)
+}
+
+type Auth struct {
+	log          *slog.Logger
+	usrSaver     UserSaver
+	usrProvider  UserProvider
+	appProvider  AppProvider
+	roleProvider RoleProvider
+	permProvider PermissionProvider
+	tokenTTL     time.Duration
+	jwtSecret    string
 }
 
 // New returns a new instance of the Auth service.
@@ -46,14 +61,20 @@ func New(
 	usrSaver UserSaver,
 	usrProvider UserProvider,
 	appProvider AppProvider,
+	roleProvider RoleProvider,
+	permProvider PermissionProvider,
 	tokenTTL time.Duration,
+	jwtSecret string,
 ) *Auth {
 	return &Auth{
-		log:         log,
-		usrSaver:    usrSaver,
-		usrProvider: usrProvider,
-		appProvider: appProvider,
-		tokenTTL:    tokenTTL,
+		log:          log,
+		usrSaver:     usrSaver,
+		usrProvider:  usrProvider,
+		appProvider:  appProvider,
+		roleProvider: roleProvider,
+		permProvider: permProvider,
+		tokenTTL:     tokenTTL,
+		jwtSecret:    jwtSecret,
 	}
 }
 
@@ -65,25 +86,20 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 		slog.String("op", op),
 		slog.String("email", email),
 	)
-
 	log.Info("attempting to login user")
 
 	user, err := a.usrProvider.User(ctx, email)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
 			a.log.Warn("user not found", slog.Any("error", err))
-
-			return "", fmt.Errorf("%s: %w", op, ErrInvalidCredentials)
+			return "", fmt.Errorf("%s: %w", op, ErrUserNotFound)
 		}
-
 		a.log.Error("failed to get user", slog.Any("error", err))
-
 		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword(user.PassHash, []byte(password)); err != nil {
 		a.log.Info("invalid credentials", slog.Any("error", err))
-
 		return "", fmt.Errorf("%s: %w", op, ErrInvalidCredentials)
 	}
 
@@ -98,12 +114,21 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
+	userRoles, err := a.roleProvider.UserRoles(ctx, user.ID)
+	if err != nil {
+		a.log.Error("failed to get user roles for JWT claims", slog.Any("error", err))
+		return "", fmt.Errorf("%s: failed to get user roles: %w", op, err)
+	}
+	roleNames := make([]string, 0, len(userRoles))
+	for _, role := range userRoles {
+		roleNames = append(roleNames, role.Name)
+	}
+
 	log.Info("user logged in successfully")
 
-	token, err := jwt.NewToken(user, app, a.tokenTTL)
+	token, err := jwt.NewToken(user, app, roleNames, a.tokenTTL)
 	if err != nil {
 		a.log.Error("failed to generate token", slog.Any("error", err))
-
 		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -111,8 +136,6 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 }
 
 // RegisterUser registers new user in the system and returns user ID.
-//
-// If user with given email already exists, returns error.
 func (a *Auth) RegisterUser(ctx context.Context, email string, password string) (int64, error) {
 	const op = "auth.RegisterUser"
 
@@ -120,13 +143,11 @@ func (a *Auth) RegisterUser(ctx context.Context, email string, password string) 
 		slog.String("op", op),
 		slog.String("email", email),
 	)
-
 	log.Info("registering user")
 
 	passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Error("failed to generate password hash", slog.Any("error", err))
-
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -134,43 +155,103 @@ func (a *Auth) RegisterUser(ctx context.Context, email string, password string) 
 	if err != nil {
 		if errors.Is(err, storage.ErrUserExists) {
 			a.log.Warn("user already exists", slog.Any("error", ErrUserExists))
-
 			return 0, fmt.Errorf("%s: %w", op, err)
 		}
 
 		log.Error("failed to save user", slog.Any("error", err))
-
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 
 	log.Info("user registered successfully")
-
 	return id, nil
 }
 
-// IsAdmin checks if user is admin.
-func (a *Auth) IsAdmin(ctx context.Context, userID int64) (bool, error) {
-	const op = "auth.IsAdmin"
+// ValidateToken parses and validates a JWT token.
+// It returns models.UserClaims (containing UserID, Email, AppID, Roles, ExpiresAt) on success.
+// If token is invalid or expired, it returns an appropriate error.
+func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error) {
+	const op = "auth.ValidateToken"
+	log := a.log.With(slog.String("op", op))
 
+	claims, err := jwt.ParseToken(tokenString, a.jwtSecret)
+	if err != nil {
+		if errors.Is(err, jwt.ErrInvalidToken) {
+			log.Warn("invalid token", slog.Any("error", err))
+			return nil, fmt.Errorf("%s: %w", op, ErrInvalidToken)
+		}
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			log.Warn("token expired", slog.Any("error", err))
+			return nil, fmt.Errorf("%s: %w", op, ErrTokenExpired)
+		}
+		log.Error("failed to parse token", slog.Any("error", err))
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	log.Info("token validated successfully",
+		slog.Int64("user_id", claims.UserID),
+		slog.String("email", claims.Email),
+		slog.Int("app_id", claims.AppID),
+		slog.Any("roles", claims.Roles),
+	)
+
+	return claims, nil
+}
+
+func (a *Auth) HasPermission(ctx context.Context, userID int64, permName string) (bool, error) {
+	const op = "auth.HasPermission"
 	log := a.log.With(
 		slog.String("op", op),
 		slog.Int64("user_id", userID),
+		slog.String("permission_name", permName),
 	)
 
-	log.Info("checking if user is admin")
-
-	isAdmin, err := a.usrProvider.IsAdmin(ctx, userID)
+	userPerms, err := a.permProvider.UserPermissions(ctx, userID)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserNotFound) {
-			log.Warn("user not found", slog.Any("error", err))
-
-			return false, fmt.Errorf("%s: %w", op, ErrUserNotFound)
-		}
-
+		log.Error("failed to get user permissions", slog.Any("error", err))
 		return false, fmt.Errorf("%s: %w", op, err)
 	}
 
-	log.Info("checked if user is admin", slog.Bool("is_admin", isAdmin))
+	for _, perm := range userPerms {
+		if perm.Name == permName {
+			log.Info("user has permission")
+			return true, nil
+		}
+	}
 
-	return isAdmin, nil
+	log.Info("user does not have permission")
+	return false, nil
+}
+
+func (a *Auth) UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error) {
+	const op = "auth.UserPermissions"
+	log := a.log.With(slog.String("op", op), slog.Int64("user_id", userID))
+
+	perms, err := a.permProvider.UserPermissions(ctx, userID)
+	if err != nil {
+		log.Error("failed to get user permissions", slog.Any("error", err))
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	log.Info("successfully retrieved user permissions", slog.Int("count", len(perms)))
+	return perms, nil
+}
+
+func (a *Auth) RequestPasswordReset(ctx context.Context, email string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (a *Auth) ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (a *Auth) ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (a *Auth) Logout(ctx context.Context, token string) error {
+	//TODO implement me
+	panic("implement me")
 }
