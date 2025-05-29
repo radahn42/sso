@@ -19,7 +19,7 @@ var (
 )
 
 type Saver interface {
-	SaveRefreshToken(ctx context.Context, userID int64, token string, expiresAt int64) error
+	SaveRefreshToken(ctx context.Context, userID int64, token string, expiresAt int64) (int64, error)
 	DeleteRefreshToken(ctx context.Context, token string) error
 	DeleteUserTokens(ctx context.Context, userID int64) error
 	RevokeAccessToken(ctx context.Context, jti string, expiresAt int64) error
@@ -75,7 +75,7 @@ func (s *Service) GenerateTokens(
 	refreshToken = uuid.NewString()
 	expiresAt := time.Now().Add(s.refreshTokenTTL).Unix()
 
-	err = s.saver.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt)
+	_, err = s.saver.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt)
 	if err != nil {
 		log.Error("failed to save refresh token", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)

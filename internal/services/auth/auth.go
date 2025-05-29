@@ -44,6 +44,10 @@ type PermissionProvider interface {
 	UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error)
 }
 
+type TokenSaver interface {
+	RevokeAccessToken(ctx context.Context, jti string, expiresAt int64) error
+}
+
 type Auth struct {
 	log          *slog.Logger
 	usrSaver     UserSaver
@@ -51,6 +55,7 @@ type Auth struct {
 	appProvider  AppProvider
 	roleProvider RoleProvider
 	permProvider PermissionProvider
+	tokenSaver   TokenSaver
 	tokenTTL     time.Duration
 	jwtSecret    string
 }
@@ -63,6 +68,7 @@ func New(
 	appProvider AppProvider,
 	roleProvider RoleProvider,
 	permProvider PermissionProvider,
+	tokenSaver TokenSaver,
 	tokenTTL time.Duration,
 	jwtSecret string,
 ) *Auth {
@@ -73,6 +79,7 @@ func New(
 		appProvider:  appProvider,
 		roleProvider: roleProvider,
 		permProvider: permProvider,
+		tokenSaver:   tokenSaver,
 		tokenTTL:     tokenTTL,
 		jwtSecret:    jwtSecret,
 	}
@@ -167,7 +174,7 @@ func (a *Auth) RegisterUser(ctx context.Context, email string, password string) 
 }
 
 // ValidateToken parses and validates a JWT token.
-// It returns models.UserClaims (containing UserID, Email, AppID, Roles, ExpiresAt) on success.
+// It returns models.UserClaims on success.
 // If token is invalid or expired, it returns an appropriate error.
 func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error) {
 	const op = "auth.ValidateToken"
@@ -252,6 +259,47 @@ func (a *Auth) ChangePassword(ctx context.Context, userID int64, oldPassword, ne
 }
 
 func (a *Auth) Logout(ctx context.Context, token string) error {
-	//TODO implement me
-	panic("implement me")
+	const op = "auth.Logout"
+	log := a.log.With(slog.String("op", op))
+
+	claims, err := jwt.ParseToken(token, a.jwtSecret)
+	if err != nil {
+		if errors.Is(err, jwt.ErrInvalidToken) {
+			log.Warn("attempted to logout with an invalid token", slog.Any("error", err))
+			return nil
+		}
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			log.Warn("attempted to logout with an expired token", slog.Any("error", err))
+			return nil
+		}
+		log.Error("failed to parse token for logout", slog.Any("error", err))
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	if claims.ID == "" || claims.ExpiresAt == nil {
+		log.Warn(
+			"token missing JTI or ExpiresAt, cannot revoke",
+			slog.String("token_str_prefix", token[:10]+"..."),
+		)
+		return fmt.Errorf("%s: failed to revoke token: %w", op, err)
+	}
+
+	err = a.tokenSaver.RevokeAccessToken(ctx, claims.ID, claims.ExpiresAt.Unix())
+	if err != nil {
+		if errors.Is(err, storage.ErrAlreadyExists) {
+			return nil
+		}
+		log.Error(
+			"failed to revoke access token",
+			slog.String("jti", claims.ID),
+			slog.Any("error", err),
+		)
+		return fmt.Errorf("%s: failed to revoke token: %w", op, err)
+	}
+
+	log.Info(
+		"access token successfully revoked",
+		slog.String("jti", claims.ID),
+	)
+	return nil
 }

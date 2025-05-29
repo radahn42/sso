@@ -39,7 +39,7 @@ func NewToken(user models.User, app models.App, roles []string, duration time.Du
 }
 
 // ParseToken parses and validates a JWT token string.
-// It returns UserClaims if the token is valid, otherwise an error.
+// It returns models.UserClaims if the token is valid, otherwise an error.
 func ParseToken(tokenString, secret string) (*models.UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &models.UserClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

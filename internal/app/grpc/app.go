@@ -17,7 +17,7 @@ type App struct {
 	port       int
 }
 
-func New(log *slog.Logger, authService authgrpc.Auth, port int, host string) *App {
+func New(log *slog.Logger, authService authgrpc.Service, port int, host string) *App {
 	validator, err := protovalidate.New()
 	if err != nil {
 		panic(err)

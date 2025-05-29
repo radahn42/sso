@@ -11,26 +11,53 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type Auth interface {
+// Service интерфейс для основной аутентификации
+type Service interface {
 	Login(ctx context.Context, email string, password string, appID int) (token string, err error)
 	RegisterUser(ctx context.Context, email string, password string) (userID int64, err error)
-	IsAdmin(ctx context.Context, userID int64) (bool, error)
-	SetUserIsAdmin(ctx context.Context, email string) (userID int64, err error)
-	SetUserIsNotAdmin(ctx context.Context, email string) (userID int64, err error)
+	Logout(ctx context.Context, token string) error
+	ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error)
+}
+
+// PasswordService интерфейс для управления паролями
+type PasswordService interface {
 	RequestPasswordReset(ctx context.Context, email string) error
 	ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error
 	ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error
-	Logout(ctx context.Context, token string) error
-	ValidateToken(ctx context.Context, tokenString string) (claims *models.UserClaims, err error)
+}
+
+// RBACService интерфейс для управления ролями и разрешениями
+type RBACService interface {
+	AssignRoleToUser(ctx context.Context, userID, roleID int64) error
+	RevokeRoleFromUser(ctx context.Context, userID, roleID int64) error
+	GetUserRoles(ctx context.Context, userID int64) ([]models.Role, error)
+	GetAllRoles(ctx context.Context) ([]models.Role, error)
+	CreateRole(ctx context.Context, name, description string) (roleID int64, err error)
+	DeleteRole(ctx context.Context, roleID int64) error
+	UpdateRole(ctx context.Context, roleID int64, name, description string) error
+
+	HasPermission(ctx context.Context, userID int64, permission string) (bool, error)
+	GetUserPermissions(ctx context.Context, userID int64) ([]models.Permission, error)
+	CreatePermission(ctx context.Context, name, description string) (permissionID int64, err error)
+	DeletePermission(ctx context.Context, id int64) error
+	UpdatePermission(ctx context.Context, id int64, name, description string) error
+	GetPermissionByID(ctx context.Context, id int64) (*models.Permission, error)
+	GetPermissionByName(ctx context.Context, name string) (*models.Permission, error)
+	GetAllPermissions(ctx context.Context) ([]models.Permission, error)
+	AddPermissionToRole(ctx context.Context, roleID, permID int64) error
+	RemovePermissionFromRole(ctx context.Context, roleID, permID int64) error
+	GetRolePermissions(ctx context.Context, roleID int64) ([]models.Permission, error)
 }
 
 type serverAPI struct {
-	ssov1.UnimplementedAuthServer
-	auth Auth
+	ssov1.UnimplementedAuthServiceServer
+	auth     Service
+	password PasswordService
+	rbac     RBACService
 }
 
-func Register(gRPC *grpc.Server, auth Auth) {
-	ssov1.RegisterAuthServer(gRPC, &serverAPI{auth: auth})
+func Register(gRPC *grpc.Server, auth Service, password PasswordService, rbac RBACService) {
+	ssov1.RegisterAuthServiceServer(gRPC, &serverAPI{auth: auth, password: password, rbac: rbac})
 }
 
 func (s *serverAPI) Login(ctx context.Context, req *ssov1.LoginRequest) (*ssov1.LoginResponse, error) {
@@ -60,89 +87,263 @@ func (s *serverAPI) Register(ctx context.Context, req *ssov1.RegisterRequest) (*
 }
 
 func (s *serverAPI) RequestPasswordReset(ctx context.Context, req *ssov1.RequestPasswordResetRequest) (*ssov1.RequestPasswordResetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "RequestPasswordReset not implemented yet")
+	err := s.password.RequestPasswordReset(ctx, req.GetEmail())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to request password reset") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.RequestPasswordResetResponse{}, nil
 }
 
 func (s *serverAPI) ConfirmPasswordReset(ctx context.Context, req *ssov1.ConfirmPasswordResetRequest) (*ssov1.ConfirmPasswordResetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "ConfirmPasswordReset not implemented yet")
+	err := s.password.ConfirmPasswordReset(ctx, req.GetEmail(), req.GetResetToken(), req.GetNewPassword())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to confirm password reset") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.ConfirmPasswordResetResponse{}, nil
 }
 
 func (s *serverAPI) ChangePassword(ctx context.Context, req *ssov1.ChangePasswordRequest) (*ssov1.ChangePasswordResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "ChangePassword not implemented yet")
+	userID, ok := ctx.Value("userID").(int64) // TODO: Сейчас id не пробрасывается в ctx, добавить это в будущем
+	if !ok {
+		return nil, status.Errorf(codes.Unauthenticated, "user not authenticated or ID not found in context")
+	}
+
+	err := s.password.ChangePassword(ctx, userID, req.GetOldPassword(), req.GetNewPassword())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to change password") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.ChangePasswordResponse{}, nil
 }
 
 func (s *serverAPI) Logout(ctx context.Context, req *ssov1.LogoutRequest) (*ssov1.LogoutResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "Logout not implemented yet")
+	err := s.auth.Logout(ctx, req.GetToken())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to logout") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.LogoutResponse{}, nil
 }
 
 func (s *serverAPI) AssignRoleToUser(ctx context.Context, req *ssov1.AssignRoleToUserRequest) (*ssov1.AssignRoleToUserResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "AssignRoleToUser not implemented yet")
+	err := s.rbac.AssignRoleToUser(ctx, req.GetUserId(), req.GetRoleId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to assign role to user") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.AssignRoleToUserResponse{}, nil
 }
 
 func (s *serverAPI) RevokeRoleFromUser(ctx context.Context, req *ssov1.RevokeRoleFromUserRequest) (*ssov1.RevokeRoleFromUserResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "RevokeRoleFromUser not implemented yet")
+	err := s.rbac.RevokeRoleFromUser(ctx, req.GetUserId(), req.GetRoleId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to revoke role from user") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.RevokeRoleFromUserResponse{}, nil
 }
 
 func (s *serverAPI) GetUserRoles(ctx context.Context, req *ssov1.GetUserRolesRequest) (*ssov1.GetUserRolesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetUserRoles not implemented yet")
+	userID := req.GetUserId()
+	roles, err := s.rbac.GetUserRoles(ctx, userID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get user roles") // TODO: Добавить специфичную обработку ошибок
+	}
+
+	ssoRoles := make([]*ssov1.Role, len(roles))
+	for i, r := range roles {
+		ssoRoles[i] = &ssov1.Role{
+			Id:          r.ID,
+			Name:        r.Name,
+			Description: r.Description,
+		}
+	}
+	return &ssov1.GetUserRolesResponse{Roles: ssoRoles}, nil
 }
 
 func (s *serverAPI) GetAllRoles(ctx context.Context, req *ssov1.GetAllRolesRequest) (*ssov1.GetAllRolesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetAllRoles not implemented yet")
+	roles, err := s.rbac.GetAllRoles(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get all roles") // TODO: Добавить специфичную обработку ошибок
+	}
+
+	ssoRoles := make([]*ssov1.Role, len(roles))
+	for i, r := range roles {
+		ssoRoles[i] = &ssov1.Role{
+			Id:          r.ID,
+			Name:        r.Name,
+			Description: r.Description,
+		}
+	}
+	return &ssov1.GetAllRolesResponse{Roles: ssoRoles}, nil
 }
 
 func (s *serverAPI) CreateRole(ctx context.Context, req *ssov1.CreateRoleRequest) (*ssov1.CreateRoleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "CreateRole not implemented yet")
+	roleID, err := s.rbac.CreateRole(ctx, req.GetName(), req.GetDescription())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create role: %v", err) // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.CreateRoleResponse{RoleId: roleID}, nil
 }
 
 func (s *serverAPI) DeleteRole(ctx context.Context, req *ssov1.DeleteRoleRequest) (*ssov1.DeleteRoleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "DeleteRole not implemented yet")
+	err := s.rbac.DeleteRole(ctx, req.GetRoleId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to delete role: %v", err) // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.DeleteRoleResponse{}, nil
 }
 
 func (s *serverAPI) UpdateRole(ctx context.Context, req *ssov1.UpdateRoleRequest) (*ssov1.UpdateRoleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "UpdateRole not implemented yet")
+	err := s.rbac.UpdateRole(ctx, req.GetRoleId(), req.GetName(), req.GetDescription())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to update role") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.UpdateRoleResponse{}, nil
 }
 
 func (s *serverAPI) HasPermission(ctx context.Context, req *ssov1.HasPermissionRequest) (*ssov1.HasPermissionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "HasPermission not implemented yet")
+	hasPerm, err := s.rbac.HasPermission(ctx, req.GetUserId(), req.GetPermissionName())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to check permission") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.HasPermissionResponse{HasPermission: hasPerm}, nil
 }
 
 func (s *serverAPI) GetUserPermissions(ctx context.Context, req *ssov1.GetUserPermissionsRequest) (*ssov1.GetUserPermissionsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetUserPermissions not implemented yet")
+	perms, err := s.rbac.GetUserPermissions(ctx, req.GetUserId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get user permissions") // TODO: Добавить специфичную обработку ошибок
+	}
+
+	ssoPerms := make([]*ssov1.Permission, len(perms))
+	for i, p := range perms {
+		ssoPerms[i] = &ssov1.Permission{
+			Id:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+		}
+	}
+	return &ssov1.GetUserPermissionsResponse{Permissions: ssoPerms}, nil
 }
 
 func (s *serverAPI) CreatePermission(ctx context.Context, req *ssov1.CreatePermissionRequest) (*ssov1.CreatePermissionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "CreatePermission not implemented yet")
+	permID, err := s.rbac.CreatePermission(ctx, req.GetName(), req.GetDescription())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to create permission") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.CreatePermissionResponse{PermissionId: permID}, nil
 }
 
 func (s *serverAPI) DeletePermission(ctx context.Context, req *ssov1.DeletePermissionRequest) (*ssov1.DeletePermissionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "DeletePermission not implemented yet")
+	err := s.rbac.DeletePermission(ctx, req.GetPermissionId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to delete permission") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.DeletePermissionResponse{}, nil
 }
 
 func (s *serverAPI) UpdatePermission(ctx context.Context, req *ssov1.UpdatePermissionRequest) (*ssov1.UpdatePermissionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "UpdatePermission not implemented yet")
+	err := s.rbac.UpdatePermission(ctx, req.GetPermissionId(), req.GetName(), req.GetDescription())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to update permission") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.UpdatePermissionResponse{}, nil
 }
 
 func (s *serverAPI) GetPermissionByID(ctx context.Context, req *ssov1.GetPermissionByIDRequest) (*ssov1.GetPermissionByIDResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetPermissionByID not implemented yet")
+	perm, err := s.rbac.GetPermissionByID(ctx, req.GetPermissionId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get permission by ID") // TODO: Добавить специфичную обработку ошибок
+	}
+	if perm == nil {
+		return nil, status.Errorf(codes.NotFound, "permission with ID %d not found", req.GetPermissionId())
+	}
+	return &ssov1.GetPermissionByIDResponse{
+		Permission: &ssov1.Permission{
+			Id:          perm.ID,
+			Name:        perm.Name,
+			Description: perm.Description,
+		},
+	}, nil
 }
 
 func (s *serverAPI) GetPermissionByName(ctx context.Context, req *ssov1.GetPermissionByNameRequest) (*ssov1.GetPermissionByNameResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetPermissionByName not implemented yet")
+	perm, err := s.rbac.GetPermissionByName(ctx, req.GetName())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get permission by name") // TODO: Добавить специфичную обработку ошибок
+	}
+	if perm == nil {
+		return nil, status.Errorf(codes.NotFound, "permission with name '%s' not found", req.GetName())
+	}
+	return &ssov1.GetPermissionByNameResponse{
+		Permission: &ssov1.Permission{
+			Id:          perm.ID,
+			Name:        perm.Name,
+			Description: perm.Description,
+		},
+	}, nil
 }
 
 func (s *serverAPI) GetAllPermissions(ctx context.Context, req *ssov1.GetAllPermissionsRequest) (*ssov1.GetAllPermissionsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetAllPermissions not implemented yet")
+	perms, err := s.rbac.GetAllPermissions(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get all permissions") // TODO: Добавить специфичную обработку ошибок
+	}
+	ssoPerms := make([]*ssov1.Permission, len(perms))
+	for i, p := range perms {
+		ssoPerms[i] = &ssov1.Permission{
+			Id:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+		}
+	}
+	return &ssov1.GetAllPermissionsResponse{Permissions: ssoPerms}, nil
 }
 
 func (s *serverAPI) AddPermissionToRole(ctx context.Context, req *ssov1.AddPermissionToRoleRequest) (*ssov1.AddPermissionToRoleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "AddPermissionToRole not implemented yet")
+	err := s.rbac.AddPermissionToRole(ctx, req.GetRoleId(), req.GetPermissionId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to add permission to role") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.AddPermissionToRoleResponse{}, nil
 }
 
 func (s *serverAPI) RemovePermissionFromRole(ctx context.Context, req *ssov1.RemovePermissionFromRoleRequest) (*ssov1.RemovePermissionFromRoleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "RemovePermissionFromRole not implemented yet")
+	err := s.rbac.RemovePermissionFromRole(ctx, req.GetRoleId(), req.GetPermissionId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to remove permission from role") // TODO: Добавить специфичную обработку ошибок
+	}
+	return &ssov1.RemovePermissionFromRoleResponse{}, nil
 }
 
 func (s *serverAPI) GetRolePermissions(ctx context.Context, req *ssov1.GetRolePermissionsRequest) (*ssov1.GetRolePermissionsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "GetRolePermissions not implemented yet")
+	perms, err := s.rbac.GetRolePermissions(ctx, req.GetRoleId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to get role permissions") // TODO: Добавить специфичную обработку ошибок
+	}
+	ssoPerms := make([]*ssov1.Permission, len(perms))
+	for i, p := range perms {
+		ssoPerms[i] = &ssov1.Permission{
+			Id:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+		}
+	}
+	return &ssov1.GetRolePermissionsResponse{Permissions: ssoPerms}, nil
+}
+
+func (s *serverAPI) ValidateToken(ctx context.Context, req *ssov1.ValidateTokenRequest) (*ssov1.ValidateTokenResponse, error) {
+	claims, err := s.auth.ValidateToken(ctx, req.GetToken())
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidToken) {
+			return nil, status.Errorf(codes.Unauthenticated, "invalid token")
+		}
+		return nil, status.Error(codes.Internal, "failed to validate token") // TODO: Добавить специфичную обработку ошибок
+	}
+	if claims == nil {
+		return nil, status.Errorf(codes.Unauthenticated, "token validation failed: no claims")
+	}
+
+	return &ssov1.ValidateTokenResponse{
+		UserId: claims.UserID,
+		Email:  claims.Email,
+		Roles:  claims.Roles,
+	}, nil
 }

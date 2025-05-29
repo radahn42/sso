@@ -57,6 +57,10 @@ github.com/radahn42/protos v0.1.4 h1:MdLb4FSaq3lyHJlrnaXV3wJKazSg+xPRD5o/h4sXQIY
 github.com/radahn42/protos v0.1.4/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
 github.com/radahn42/protos v0.1.5 h1:KQijQaVYs0fwPRvFvTbtdhj10g2RLrf03ZM3SBFmK2s=
 github.com/radahn42/protos v0.1.5/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
+github.com/radahn42/protos v0.1.6 h1:CFHpoWt9KYXmzYv4MCl32L9sEpx7edfxyDWDWEverBg=
+github.com/radahn42/protos v0.1.6/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
+github.com/radahn42/protos v0.1.7 h1:lasPn+CaUUJPTqKgXOUrlEvTor+kCXpOmrbKWC8inr0=
+github.com/radahn42/protos v0.1.7/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/sethvargo/go-retry v0.3.0 h1:EEt31A35QhrcRZtrYFDTBg91cqZVnFL2navjDrah2SE=
