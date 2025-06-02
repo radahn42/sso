@@ -1,11 +1,14 @@
 package app
 
 import (
-	grpcapp "github.com/radahn42/sso/internal/app/grpc"
-	"github.com/radahn42/sso/internal/services/auth"
-	"github.com/radahn42/sso/internal/storage/sqlite"
 	"log/slog"
 	"time"
+
+	grpcapp "github.com/radahn42/sso/internal/app/grpc"
+	"github.com/radahn42/sso/internal/services/auth"
+	"github.com/radahn42/sso/internal/services/permission"
+	"github.com/radahn42/sso/internal/services/role"
+	"github.com/radahn42/sso/internal/storage/sqlite"
 )
 
 type App struct {
@@ -25,9 +28,11 @@ func New(
 		panic(err)
 	}
 
-	authService := auth.New(log, storage, storage, storage, storage, storage, tokenTTL, jwtSecret)
+	authService := auth.New(log, storage, storage, storage, storage, storage, storage, tokenTTL, jwtSecret)
+	roleService := role.New(log, storage, storage, storage, storage)
+	permService := permission.New(log, storage, storage, storage, storage, storage)
 
-	grpcApp := grpcapp.New(log, authService, grpcPort, grpcHost)
+	grpcApp := grpcapp.New(log, authService, roleService, permService, grpcPort, grpcHost)
 
 	return &App{
 		GRPCSrv: grpcApp,

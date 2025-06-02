@@ -17,7 +17,14 @@ type App struct {
 	port       int
 }
 
-func New(log *slog.Logger, authService authgrpc.Service, port int, host string) *App {
+func New(
+	log *slog.Logger,
+	authService authgrpc.Service,
+	roleService authgrpc.RoleService,
+	permService authgrpc.PermissionService,
+	port int,
+	host string,
+) *App {
 	validator, err := protovalidate.New()
 	if err != nil {
 		panic(err)
@@ -27,7 +34,7 @@ func New(log *slog.Logger, authService authgrpc.Service, port int, host string) 
 		grpc.UnaryInterceptor(protovalidate_middleware.UnaryServerInterceptor(validator)),
 	)
 
-	authgrpc.Register(gRPCServer, authService)
+	authgrpc.Register(gRPCServer, authService, roleService, permService)
 
 	return &App{
 		log:        log,

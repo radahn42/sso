@@ -519,7 +519,7 @@ func (s *Storage) UpdatePermission(ctx context.Context, permissionID int64, name
 	return nil
 }
 
-func (s *Storage) PermissionByID(ctx context.Context, permissionID int64) (models.Permission, error) {
+func (s *Storage) PermissionByID(ctx context.Context, permissionID int64) (*models.Permission, error) {
 	const op = "storage.sqlite.PermissionByID"
 
 	var perm models.Permission
@@ -528,12 +528,12 @@ func (s *Storage) PermissionByID(ctx context.Context, permissionID int64) (model
 	).Scan(&perm.ID, &perm.Name, &perm.Description)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.Permission{}, fmt.Errorf("%s: %w", op, storage.ErrNotFound)
+			return nil, fmt.Errorf("%s: %w", op, storage.ErrNotFound)
 		}
-		return models.Permission{}, fmt.Errorf("%s: %w", op, err)
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	return perm, nil
+	return &perm, nil
 }
 
 func (s *Storage) PermissionByName(ctx context.Context, name string) (models.Permission, error) {
@@ -578,6 +578,29 @@ func (s *Storage) AllPermissions(ctx context.Context) ([]models.Permission, erro
 	}
 
 	return perms, nil
+}
+
+func (s *Storage) HasPermission(ctx context.Context, userID int64, permission string) (bool, error) {
+	const op = "storage.sqlite.HasPermission"
+
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `
+	SELECT EXISTS(
+		SELECT 1
+		FROM user_roles ur
+		JOIN role_permissions rp ON ur.role_id = rp.role_id
+		JOIN permissions p ON rp.permission_id = p.id
+		WHERE ur.user_id = ? AND p.name = ?
+		limit 1
+	)`, userID, permission).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("%s: query error: %w", op, err)
+	}
+
+	return true, nil
 }
 
 func (s *Storage) UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error) {
