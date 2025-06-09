@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
+
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/lib/jwt"
 	"github.com/radahn42/sso/internal/storage"
 	"golang.org/x/crypto/bcrypt"
-	"log/slog"
-	"time"
 )
 
 var (
@@ -57,7 +58,6 @@ type Auth struct {
 	permProvider PermissionProvider
 	tokenSaver   TokenSaver
 	tokenTTL     time.Duration
-	jwtSecret    string
 }
 
 // New returns a new instance of the Auth service.
@@ -70,7 +70,6 @@ func New(
 	permProvider PermissionProvider,
 	tokenSaver TokenSaver,
 	tokenTTL time.Duration,
-	jwtSecret string,
 ) *Auth {
 	return &Auth{
 		log:          log,
@@ -81,7 +80,6 @@ func New(
 		permProvider: permProvider,
 		tokenSaver:   tokenSaver,
 		tokenTTL:     tokenTTL,
-		jwtSecret:    jwtSecret,
 	}
 }
 
@@ -180,7 +178,19 @@ func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.U
 	const op = "auth.ValidateToken"
 	log := a.log.With(slog.String("op", op))
 
-	claims, err := jwt.ParseToken(tokenString, a.jwtSecret)
+	claimsUnverified, err := jwt.ParseTokenUnverified(tokenString)
+	if err != nil {
+		log.Warn("failed to parse token unverified", slog.Any("error", err))
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidToken)
+	}
+
+	app, err := a.appProvider.App(ctx, claimsUnverified.AppID)
+	if err != nil {
+		log.Warn("invalid app id in token", slog.Any("error", err))
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidAppID)
+	}
+
+	claims, err := jwt.ParseToken(tokenString, app.Secret)
 	if err != nil {
 		if errors.Is(err, jwt.ErrInvalidToken) {
 			log.Warn("invalid token", slog.Any("error", err))
@@ -204,45 +214,6 @@ func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.U
 	return claims, nil
 }
 
-func (a *Auth) HasPermission(ctx context.Context, userID int64, permName string) (bool, error) {
-	const op = "auth.HasPermission"
-	log := a.log.With(
-		slog.String("op", op),
-		slog.Int64("user_id", userID),
-		slog.String("permission_name", permName),
-	)
-
-	userPerms, err := a.permProvider.UserPermissions(ctx, userID)
-	if err != nil {
-		log.Error("failed to get user permissions", slog.Any("error", err))
-		return false, fmt.Errorf("%s: %w", op, err)
-	}
-
-	for _, perm := range userPerms {
-		if perm.Name == permName {
-			log.Info("user has permission")
-			return true, nil
-		}
-	}
-
-	log.Info("user does not have permission")
-	return false, nil
-}
-
-func (a *Auth) UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error) {
-	const op = "auth.UserPermissions"
-	log := a.log.With(slog.String("op", op), slog.Int64("user_id", userID))
-
-	perms, err := a.permProvider.UserPermissions(ctx, userID)
-	if err != nil {
-		log.Error("failed to get user permissions", slog.Any("error", err))
-		return nil, fmt.Errorf("%s: %w", op, err)
-	}
-
-	log.Info("successfully retrieved user permissions", slog.Int("count", len(perms)))
-	return perms, nil
-}
-
 func (a *Auth) RequestPasswordReset(ctx context.Context, email string) error {
 	//TODO implement me
 	panic("implement me")
@@ -262,7 +233,19 @@ func (a *Auth) Logout(ctx context.Context, token string) error {
 	const op = "auth.Logout"
 	log := a.log.With(slog.String("op", op))
 
-	claims, err := jwt.ParseToken(token, a.jwtSecret)
+	claimsUnverified, err := jwt.ParseTokenUnverified(token)
+	if err != nil {
+		log.Warn("failed to parse token unverified", slog.Any("error", err))
+		return fmt.Errorf("%s: %w", op, ErrInvalidToken)
+	}
+
+	app, err := a.appProvider.App(ctx, claimsUnverified.AppID)
+	if err != nil {
+		log.Warn("invalid app id in token", slog.Any("error", err))
+		return fmt.Errorf("%s: %w", op, ErrInvalidAppID)
+	}
+
+	claims, err := jwt.ParseToken(token, app.Secret)
 	if err != nil {
 		if errors.Is(err, jwt.ErrInvalidToken) {
 			log.Warn("attempted to logout with an invalid token", slog.Any("error", err))
@@ -281,7 +264,7 @@ func (a *Auth) Logout(ctx context.Context, token string) error {
 			"token missing JTI or ExpiresAt, cannot revoke",
 			slog.String("token_str_prefix", token[:10]+"..."),
 		)
-		return fmt.Errorf("%s: failed to revoke token: %w", op, err)
+		return fmt.Errorf("%s: %w", op, ErrInvalidToken)
 	}
 
 	err = a.tokenSaver.RevokeAccessToken(ctx, claims.ID, claims.ExpiresAt.Unix())

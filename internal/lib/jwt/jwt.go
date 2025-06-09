@@ -3,9 +3,11 @@ package jwt
 import (
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/radahn42/sso/internal/domain/models"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/radahn42/sso/internal/domain/models"
 )
 
 var (
@@ -18,6 +20,7 @@ var (
 func NewToken(user models.User, app models.App, roles []string, duration time.Duration) (string, error) {
 	claims := models.UserClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.NewString(),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
@@ -59,5 +62,17 @@ func ParseToken(tokenString, secret string) (*models.UserClaims, error) {
 		return nil, ErrInvalidToken
 	}
 
+	return claims, nil
+}
+
+func ParseTokenUnverified(tokenString string) (*models.UserClaims, error) {
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &models.UserClaims{})
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := token.Claims.(*models.UserClaims)
+	if !ok {
+		return nil, errors.New("invalid claims type")
+	}
 	return claims, nil
 }

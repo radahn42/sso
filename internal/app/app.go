@@ -21,14 +21,13 @@ func New(
 	grpcHost string,
 	storagePath string,
 	tokenTTL time.Duration,
-	jwtSecret string,
 ) *App {
 	storage, err := sqlite.New(storagePath)
 	if err != nil {
 		panic(err)
 	}
 
-	authService := auth.New(log, storage, storage, storage, storage, storage, storage, tokenTTL, jwtSecret)
+	authService := auth.New(log, storage, storage, storage, storage, storage, storage, tokenTTL)
 	roleService := role.New(log, storage, storage, storage, storage)
 	permService := permission.New(log, storage, storage, storage, storage, storage)
 

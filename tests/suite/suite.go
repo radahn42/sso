@@ -2,19 +2,20 @@ package suite
 
 import (
 	"context"
+	"net"
+	"strconv"
+	"testing"
+
 	ssov1 "github.com/radahn42/protos/gen/proto/sso"
 	"github.com/radahn42/sso/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"net"
-	"strconv"
-	"testing"
 )
 
 type Suite struct {
 	*testing.T
 	Cfg        *config.Config
-	AuthClient ssov1.AuthClient
+	AuthClient ssov1.AuthServiceClient
 }
 
 func New(t *testing.T) (context.Context, *Suite) {
@@ -38,7 +39,7 @@ func New(t *testing.T) (context.Context, *Suite) {
 		t.Fatalf("grpc server connection failed: %v", err)
 	}
 
-	client := ssov1.NewAuthClient(conn)
+	client := ssov1.NewAuthServiceClient(conn)
 
 	return ctx, &Suite{
 		T:          t,

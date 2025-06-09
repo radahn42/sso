@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/radahn42/sso/internal/app"
-	"github.com/radahn42/sso/internal/config"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/radahn42/sso/internal/app"
+	"github.com/radahn42/sso/internal/config"
 )
 
 const (
@@ -21,7 +22,7 @@ func main() {
 
 	log.Info("starting application", slog.Any("config", cfg))
 
-	application := app.New(log, cfg.GRPC.Port, cfg.GRPC.Host, cfg.StoragePath, cfg.TokenTTL, "secret")
+	application := app.New(log, cfg.GRPC.Port, cfg.GRPC.Host, cfg.StoragePath, cfg.TokenTTL)
 
 	go application.GRPCSrv.MustRun()
 
