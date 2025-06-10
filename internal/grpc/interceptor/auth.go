@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,7 @@ type TokenProvider interface {
 type userCtxKey struct{}
 
 func AuthInterceptor(
+	log *slog.Logger,
 	appProvider AppProvider,
 	permProvider PermissionProvider,
 	tokenProvider TokenProvider,
@@ -38,6 +40,10 @@ func AuthInterceptor(
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (any, error) {
+		const op = "auth.AuthInterceptor"
+
+		log := log.With(slog.String("op", op))
+
 		requiredPerms, ok := protectedMethods[info.FullMethod]
 		if !ok {
 			return handler(ctx, req)
@@ -72,6 +78,7 @@ func AuthInterceptor(
 
 		app, err := appProvider.App(ctx, appID)
 		if err != nil {
+			log.Error("failed to get app info", slog.Any("error", err))
 			return nil, status.Errorf(codes.FailedPrecondition, "failed to get app info: %v", err)
 		}
 

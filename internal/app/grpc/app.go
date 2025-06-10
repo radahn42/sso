@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/radahn42/sso/internal/grpc/interceptor"
+
 	"buf.build/go/protovalidate"
 	protovalidate_middleware "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
 	authgrpc "github.com/radahn42/sso/internal/grpc/auth"
@@ -23,6 +25,9 @@ func New(
 	authService authgrpc.Service,
 	roleService authgrpc.RoleService,
 	permService authgrpc.PermissionService,
+	appProvider interceptor.AppProvider,
+	permProvider interceptor.PermissionProvider,
+	tokenProvider interceptor.TokenProvider,
 	port int,
 	host string,
 ) *App {
@@ -33,6 +38,19 @@ func New(
 
 	gRPCServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
+			interceptor.AuthInterceptor(log, appProvider, permProvider, tokenProvider, map[string][]string{
+				"/auth.AuthService/ChangePassword": {"password:change"},
+				"/auth.AuthService/Logout":         {}, // Просто валидный токен
+
+				"/auth.AuthService/AssignRoleToUser":   {"user_roles:assign"},
+				"/auth.AuthService/RevokeRoleFromUser": {"user_roles:revoke"},
+				"/auth.AuthService/GetUserRoles":       {"user_roles:read"},
+
+				"/auth.AuthService/GetAllRoles": {"roles:read"},
+				"/auth.AuthService/CreateRole":  {"roles:create"},
+				"/auth.AuthService/DeleteRole":  {"roles:delete"},
+				"/auth.AuthService/UpdateRole":  {"roles:update"},
+			}),
 			protovalidate_middleware.UnaryServerInterceptor(validator),
 		),
 	)
