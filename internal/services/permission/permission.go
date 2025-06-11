@@ -207,7 +207,7 @@ func (s *Service) AddPermissionToRole(ctx context.Context, roleID int64, permiss
 	log := s.log.With(
 		slog.String("op", op),
 		slog.Int64("role_id", roleID),
-		slog.Int64("permission_name", permissionID),
+		slog.Int64("permission_id", permissionID),
 	)
 
 	role, err := s.roleProvider.RoleByID(ctx, roleID)
