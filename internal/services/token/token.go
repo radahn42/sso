@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/lib/jwt"
 	"github.com/radahn42/sso/internal/storage"
-	"log/slog"
-	"time"
 )
 
 var (
@@ -27,6 +28,7 @@ type Saver interface {
 
 type Provider interface {
 	IsAccessTokenRevoked(ctx context.Context, jti string) (bool, error)
+	RefreshToken(ctx context.Context, token string) (*models.RefreshToken, error)
 }
 
 type Service struct {
@@ -196,4 +198,48 @@ func (s *Service) RevokeAllRefreshTokens(ctx context.Context, userID int64) erro
 
 	log.Info("all refresh tokens revoked for user")
 	return nil
+}
+
+func (s *Service) RefreshTokens(
+	ctx context.Context,
+	refreshToken string,
+	app models.App,
+	user models.User,
+	roles []string,
+) (newAccessToken, newRefreshToken string, err error) {
+	const op = "token.RefreshTokens"
+	log := s.log.With(
+		slog.String("op", op),
+		slog.Int64("user_id", user.ID),
+		slog.String("app_name", app.Name),
+	)
+
+	rt, err := s.provider.RefreshToken(ctx, refreshToken)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			log.Warn("refresh token not found", slog.String("token_prefix", refreshToken[:5]+"..."))
+			return "", "", fmt.Errorf("%s: %w", op, ErrInvalidToken)
+		}
+		log.Error("failed to get refresh token", slog.Any("error", err))
+		return "", "", fmt.Errorf("%s: %w", op, err)
+	}
+
+	if time.Now().Unix() > rt.ExpiresAt {
+		log.Warn("refresh token expired")
+		return "", "", fmt.Errorf("%s: %w", op, ErrTokenExpired)
+	}
+
+	if err := s.saver.DeleteRefreshToken(ctx, refreshToken); err != nil {
+		log.Error("failed to delete old refresh token", slog.Any("error", err))
+		return "", "", fmt.Errorf("%s: %w", op, err)
+	}
+
+	newAccessToken, newRefreshToken, err = s.GenerateTokens(ctx, user, app, roles)
+	if err != nil {
+		log.Error("failed to generate new tokens", slog.Any("error", err))
+		return "", "", fmt.Errorf("%s: %w", op, err)
+	}
+
+	log.Info("tokens refreshed successfully")
+	return newAccessToken, newRefreshToken, nil
 }

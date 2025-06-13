@@ -2,9 +2,11 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
+	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/storage"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -112,4 +114,25 @@ func (s *Storage) IsAccessTokenRevoked(ctx context.Context, jti string) (bool, e
 	}
 
 	return revoked, nil
+}
+
+func (s *Storage) RefreshToken(ctx context.Context, token string) (*models.RefreshToken, error) {
+	const op = "storage.sqlite.RefreshToken"
+
+	var rt models.RefreshToken
+	err := s.db.QueryRowContext(ctx, `SELECT user_id, token, expires_at
+		FROM refresh_tokens
+		WHERE token = $1`, token).Scan(
+		&rt.UserID,
+		&rt.Token,
+		&rt.ExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, storage.ErrNotFound
+		}
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	return &rt, nil
 }

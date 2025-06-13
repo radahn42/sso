@@ -25,6 +25,7 @@ func New(
 	authService authgrpc.Service,
 	roleService authgrpc.RoleService,
 	permService authgrpc.PermissionService,
+	tokenService authgrpc.TokenService,
 	appProvider interceptor.AppProvider,
 	permProvider interceptor.PermissionProvider,
 	tokenProvider interceptor.TokenProvider,
@@ -55,7 +56,7 @@ func New(
 		),
 	)
 
-	authgrpc.Register(gRPCServer, authService, roleService, permService)
+	authgrpc.Register(gRPCServer, authService, roleService, permService, tokenService)
 
 	return &App{
 		log:        log,

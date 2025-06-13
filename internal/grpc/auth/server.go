@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/radahn42/sso/internal/services/token"
+
 	ssov1 "github.com/radahn42/protos/gen/proto/sso"
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/services/auth"
@@ -12,7 +14,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Service Объединяет аутентификацию и управление паролями
 type Service interface {
 	RegisterUser(ctx context.Context, email string, password string) (userID int64, err error)
 	Login(ctx context.Context, email string, password string, appID int) (token string, err error)
@@ -23,7 +24,6 @@ type Service interface {
 	ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error)
 }
 
-// RoleService Интерфейс для управления ролями
 type RoleService interface {
 	AssignRoleToUser(ctx context.Context, userID, roleID int64) error
 	RevokeRoleFromUser(ctx context.Context, userID, roleID int64) error
@@ -32,10 +32,9 @@ type RoleService interface {
 	CreateRole(ctx context.Context, name, description string) (roleID int64, err error)
 	DeleteRole(ctx context.Context, roleID int64) error
 	UpdateRole(ctx context.Context, roleID int64, name, description string) error
-	RolePermissions(ctx context.Context, roleID int64) ([]models.Permission, error) // Возможно, этот метод здесь
+	RolePermissions(ctx context.Context, roleID int64) ([]models.Permission, error)
 }
 
-// PermissionService Интерфейс для управления разрешениями
 type PermissionService interface {
 	HasPermission(ctx context.Context, userID int64, permission string) (bool, error)
 	UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error)
@@ -48,18 +47,31 @@ type PermissionService interface {
 	AddPermissionToRole(ctx context.Context, roleID, permissionID int64) error
 	RemovePermissionFromRole(ctx context.Context, roleID, permissionID int64) error
 }
-type serverAPI struct {
-	ssov1.UnimplementedAuthServiceServer
-	authService Service
-	roleService RoleService
-	permService PermissionService
+
+type TokenService interface {
+	RefreshTokens(
+		ctx context.Context,
+		refreshToken string,
+		app models.App,
+		user models.User,
+		roles []string,
+	) (newAccessToken, newRefreshToken string, err error)
 }
 
-func Register(gRPC *grpc.Server, authService Service, roleService RoleService, permService PermissionService) {
+type serverAPI struct {
+	ssov1.UnimplementedAuthServiceServer
+	authService  Service
+	roleService  RoleService
+	permService  PermissionService
+	tokenService TokenService
+}
+
+func Register(gRPC *grpc.Server, authService Service, roleService RoleService, permService PermissionService, tokenService TokenService) {
 	ssov1.RegisterAuthServiceServer(gRPC, &serverAPI{
-		authService: authService,
-		roleService: roleService,
-		permService: permService,
+		authService:  authService,
+		roleService:  roleService,
+		permService:  permService,
+		tokenService: tokenService,
 	})
 }
 
@@ -348,5 +360,35 @@ func (s *serverAPI) ValidateToken(ctx context.Context, req *ssov1.ValidateTokenR
 		UserId: claims.UserID,
 		Email:  claims.Email,
 		Roles:  claims.Roles,
+	}, nil
+}
+
+func (s *serverAPI) RefreshTokens(ctx context.Context, req *ssov1.RefreshTokensRequest) (*ssov1.RefreshTokensResponse, error) {
+	app := models.App{
+		ID:     int(req.GetApp().GetId()),
+		Name:   req.GetApp().GetName(),
+		Secret: req.GetApp().GetSecret(),
+	}
+
+	user := models.User{
+		ID:       req.GetUser().GetId(),
+		Email:    req.GetUser().GetEmail(),
+		PassHash: req.GetUser().GetPassHash(),
+	}
+
+	accessToken, refreshToken, err := s.tokenService.RefreshTokens(ctx, req.GetRefreshToken(), app, user, req.GetRoles())
+	if err != nil {
+		if errors.Is(err, token.ErrInvalidToken) {
+			return nil, status.Errorf(codes.Unauthenticated, "invalid refresh token")
+		}
+		if errors.Is(err, token.ErrTokenRevoked) {
+			return nil, status.Errorf(codes.PermissionDenied, "refresh token has been revoked")
+		}
+		return nil, status.Error(codes.Internal, "failed to refresh tokens")
+	}
+
+	return &ssov1.RefreshTokensResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
 	}, nil
 }

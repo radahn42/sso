@@ -35,7 +35,7 @@ func New(
 	appService := app.New(log, storage)
 	tokenService := token.New(log, storage, storage, tokenTTL, tokenTTL)
 
-	grpcApp := grpcapp.New(log, authService, roleService, permService, appService, permService, tokenService, grpcPort, grpcHost)
+	grpcApp := grpcapp.New(log, authService, roleService, permService, tokenService, appService, permService, tokenService, grpcPort, grpcHost)
 
 	return &App{
 		GRPCSrv: grpcApp,
