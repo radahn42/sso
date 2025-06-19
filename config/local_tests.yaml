@@ -1,6 +1,7 @@
-env: "local" # prod
+env: "local"
 storage_path: "./storage/sso.db"
-token_ttl: 1h
+access_token_ttl: 15m
+refresh_token_ttl: 336h
 jwt_secret: secret
 grpc:
   port: 44044

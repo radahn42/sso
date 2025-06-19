@@ -10,7 +10,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/pressly/goose/v3 v3.24.3
-	github.com/radahn42/protos v0.2.0
+	github.com/radahn42/protos v0.2.3
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.39.0
 	google.golang.org/grpc v1.73.0

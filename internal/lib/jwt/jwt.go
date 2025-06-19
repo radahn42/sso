@@ -16,29 +16,25 @@ var (
 )
 
 // NewToken generates a new JWT token for a user and app.
-// It uses models.User and models.App to create claims.
-func NewToken(user models.User, app models.App, roles []string, duration time.Duration) (string, error) {
-	claims := models.UserClaims{
+func NewToken(userID int64, email string, appID int, roles []string, secret string, duration time.Duration) (string, error) {
+	claims := &models.UserClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.NewString(),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "sso-service",
+			Subject:   fmt.Sprintf("%d", userID),
 			NotBefore: jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 		},
-		UserID: user.ID,
-		Email:  user.Email,
-		AppID:  app.ID,
+		UserID: userID,
+		Email:  email,
+		AppID:  appID,
 		Roles:  roles,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	tokenString, err := token.SignedString([]byte(app.Secret))
-	if err != nil {
-		return "", fmt.Errorf("failed to sign token: %w", err)
-	}
-
-	return tokenString, nil
+	return token.SignedString([]byte(secret))
 }
 
 // ParseToken parses and validates a JWT token string.

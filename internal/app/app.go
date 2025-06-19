@@ -1,16 +1,15 @@
 package app
 
 import (
-	"log/slog"
-	"time"
-
 	grpcapp "github.com/radahn42/sso/internal/app/grpc"
+	"github.com/radahn42/sso/internal/config"
 	"github.com/radahn42/sso/internal/services/app"
 	"github.com/radahn42/sso/internal/services/auth"
 	"github.com/radahn42/sso/internal/services/permission"
 	"github.com/radahn42/sso/internal/services/role"
 	"github.com/radahn42/sso/internal/services/token"
 	"github.com/radahn42/sso/internal/storage/sqlite"
+	"log/slog"
 )
 
 type App struct {
@@ -19,23 +18,20 @@ type App struct {
 
 func New(
 	log *slog.Logger,
-	grpcPort int,
-	grpcHost string,
-	storagePath string,
-	tokenTTL time.Duration,
+	cfg *config.Config,
 ) *App {
-	storage, err := sqlite.New(storagePath)
+	storage, err := sqlite.New(cfg.StoragePath)
 	if err != nil {
 		panic(err)
 	}
 
-	authService := auth.New(log, storage, storage, storage, storage, storage, storage, tokenTTL)
+	tokenService := token.New(log, cfg, storage, storage, storage, storage, storage)
+	authService := auth.New(log, storage, storage, storage, storage, storage, tokenService)
 	roleService := role.New(log, storage, storage, storage, storage)
 	permService := permission.New(log, storage, storage, storage, storage, storage)
 	appService := app.New(log, storage)
-	tokenService := token.New(log, storage, storage, tokenTTL, tokenTTL)
 
-	grpcApp := grpcapp.New(log, authService, roleService, permService, tokenService, appService, permService, tokenService, grpcPort, grpcHost)
+	grpcApp := grpcapp.New(log, cfg, authService, roleService, permService, appService, permService, tokenService)
 
 	return &App{
 		GRPCSrv: grpcApp,

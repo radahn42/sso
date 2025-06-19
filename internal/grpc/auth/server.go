@@ -6,7 +6,7 @@ import (
 
 	"github.com/radahn42/sso/internal/services/token"
 
-	ssov1 "github.com/radahn42/protos/gen/proto/sso"
+	ssov1 "github.com/radahn42/protos/gen/sso/v1"
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/services/auth"
 	"google.golang.org/grpc"
@@ -22,6 +22,7 @@ type Service interface {
 	ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error
 	ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error
 	ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error)
+	RefreshTokens(ctx context.Context, refreshToken string) (newAccessToken, newRefreshToken string, err error)
 }
 
 type RoleService interface {
@@ -48,44 +49,31 @@ type PermissionService interface {
 	RemovePermissionFromRole(ctx context.Context, roleID, permissionID int64) error
 }
 
-type TokenService interface {
-	RefreshTokens(
-		ctx context.Context,
-		refreshToken string,
-		app models.App,
-		user models.User,
-		roles []string,
-	) (newAccessToken, newRefreshToken string, err error)
-}
-
 type serverAPI struct {
 	ssov1.UnimplementedAuthServiceServer
-	authService  Service
-	roleService  RoleService
-	permService  PermissionService
-	tokenService TokenService
+	authService Service
+	roleService RoleService
+	permService PermissionService
 }
 
-func Register(gRPC *grpc.Server, authService Service, roleService RoleService, permService PermissionService, tokenService TokenService) {
+func Register(gRPC *grpc.Server, authService Service, roleService RoleService, permService PermissionService) {
 	ssov1.RegisterAuthServiceServer(gRPC, &serverAPI{
-		authService:  authService,
-		roleService:  roleService,
-		permService:  permService,
-		tokenService: tokenService,
+		authService: authService,
+		roleService: roleService,
+		permService: permService,
 	})
 }
 
 func (s *serverAPI) Login(ctx context.Context, req *ssov1.LoginRequest) (*ssov1.LoginResponse, error) {
-	token, err := s.authService.Login(ctx, req.GetEmail(), req.GetPassword(), int(req.GetAppId()))
+	accessToken, err := s.authService.Login(ctx, req.GetEmail(), req.GetPassword(), int(req.GetAppId()))
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid credentials")
 		}
-
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	return &ssov1.LoginResponse{Token: token}, nil
+	return &ssov1.LoginResponse{AccessToken: accessToken}, nil
 }
 
 func (s *serverAPI) Register(ctx context.Context, req *ssov1.RegisterRequest) (*ssov1.RegisterResponse, error) {
@@ -94,7 +82,6 @@ func (s *serverAPI) Register(ctx context.Context, req *ssov1.RegisterRequest) (*
 		if errors.Is(err, auth.ErrUserExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "user already exists")
 		}
-
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
@@ -364,19 +351,7 @@ func (s *serverAPI) ValidateToken(ctx context.Context, req *ssov1.ValidateTokenR
 }
 
 func (s *serverAPI) RefreshTokens(ctx context.Context, req *ssov1.RefreshTokensRequest) (*ssov1.RefreshTokensResponse, error) {
-	app := models.App{
-		ID:     int(req.GetApp().GetId()),
-		Name:   req.GetApp().GetName(),
-		Secret: req.GetApp().GetSecret(),
-	}
-
-	user := models.User{
-		ID:       req.GetUser().GetId(),
-		Email:    req.GetUser().GetEmail(),
-		PassHash: req.GetUser().GetPassHash(),
-	}
-
-	accessToken, refreshToken, err := s.tokenService.RefreshTokens(ctx, req.GetRefreshToken(), app, user, req.GetRoles())
+	accessToken, refreshToken, err := s.authService.RefreshTokens(ctx, req.GetRefreshToken())
 	if err != nil {
 		if errors.Is(err, token.ErrInvalidToken) {
 			return nil, status.Errorf(codes.Unauthenticated, "invalid refresh token")

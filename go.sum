@@ -58,6 +58,8 @@ github.com/radahn42/protos v0.1.10 h1:t/Efq/N98eGk6sYzirTvyvdtwwuyQeZCLsFRZCqHA2
 github.com/radahn42/protos v0.1.10/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
 github.com/radahn42/protos v0.2.0 h1:mGT/acOiI5uFZDFzQwCKW9CHq1s/yI8XgGUX9HdfEn0=
 github.com/radahn42/protos v0.2.0/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
+github.com/radahn42/protos v0.2.3 h1:0cIs+9Fidgc/HxC0rhIJSq6Ev3xt4N21DREXcI6pUyI=
+github.com/radahn42/protos v0.2.3/go.mod h1:Bad4yAhLVVpvzmOQAuPMMqhjWs61LiX3aPQstwH0r9g=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/sethvargo/go-retry v0.3.0 h1:EEt31A35QhrcRZtrYFDTBg91cqZVnFL2navjDrah2SE=

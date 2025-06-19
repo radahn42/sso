@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"time"
-
 	"github.com/radahn42/sso/internal/domain/models"
+	"github.com/radahn42/sso/internal/lib/authctx"
 	"github.com/radahn42/sso/internal/lib/jwt"
+	"github.com/radahn42/sso/internal/services/token"
 	"github.com/radahn42/sso/internal/storage"
 	"golang.org/x/crypto/bcrypt"
+	"log/slog"
 )
 
 var (
@@ -19,7 +19,6 @@ var (
 	ErrUserExists         = errors.New("user already exists")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrInvalidToken       = errors.New("invalid token")
-	ErrTokenExpired       = errors.New("token expired")
 )
 
 type UserSaver interface {
@@ -45,8 +44,12 @@ type PermissionProvider interface {
 	UserPermissions(ctx context.Context, userID int64) ([]models.Permission, error)
 }
 
-type TokenSaver interface {
-	RevokeAccessToken(ctx context.Context, jti string, expiresAt int64) error
+type TokenService interface {
+	GenerateTokens(ctx context.Context, payload token.Payload) (accessToken, refreshToken string, err error)
+	ValidateAccessToken(ctx context.Context, tokenStr, appSecret string) (*models.UserClaims, error)
+	RevokeAccessToken(ctx context.Context, tokenStr, appSecret string) error
+	RevokeRefreshToken(ctx context.Context, refreshToken string) error
+	RefreshTokens(ctx context.Context, refreshToken string) (newAccessToken, newRefreshToken string, err error)
 }
 
 type Auth struct {
@@ -56,8 +59,7 @@ type Auth struct {
 	appProvider  AppProvider
 	roleProvider RoleProvider
 	permProvider PermissionProvider
-	tokenSaver   TokenSaver
-	tokenTTL     time.Duration
+	tokenService TokenService
 }
 
 // New returns a new instance of the Auth service.
@@ -68,8 +70,7 @@ func New(
 	appProvider AppProvider,
 	roleProvider RoleProvider,
 	permProvider PermissionProvider,
-	tokenSaver TokenSaver,
-	tokenTTL time.Duration,
+	tokenService TokenService,
 ) *Auth {
 	return &Auth{
 		log:          log,
@@ -78,8 +79,7 @@ func New(
 		appProvider:  appProvider,
 		roleProvider: roleProvider,
 		permProvider: permProvider,
-		tokenSaver:   tokenSaver,
-		tokenTTL:     tokenTTL,
+		tokenService: tokenService,
 	}
 }
 
@@ -131,13 +131,19 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 
 	log.Info("user logged in successfully")
 
-	token, err := jwt.NewToken(user, app, roleNames, a.tokenTTL)
+	accessToken, _, err := a.tokenService.GenerateTokens(ctx, token.Payload{
+		UserID: user.ID,
+		AppID:  appID,
+		Email:  email,
+		Roles:  roleNames,
+		Secret: app.Secret,
+	})
 	if err != nil {
 		a.log.Error("failed to generate token", slog.Any("error", err))
 		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	return token, nil
+	return accessToken, nil
 }
 
 // RegisterUser registers new user in the system and returns user ID.
@@ -178,40 +184,21 @@ func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.U
 	const op = "auth.ValidateToken"
 	log := a.log.With(slog.String("op", op))
 
-	claimsUnverified, err := jwt.ParseTokenUnverified(tokenString)
-	if err != nil {
-		log.Warn("failed to parse token unverified", slog.Any("error", err))
-		return nil, fmt.Errorf("%s: %w", op, ErrInvalidToken)
-	}
-
-	app, err := a.appProvider.App(ctx, claimsUnverified.AppID)
-	if err != nil {
-		log.Warn("invalid app id in token", slog.Any("error", err))
+	appID, ok := authctx.AppID(ctx)
+	if !ok {
 		return nil, fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 	}
 
-	claims, err := jwt.ParseToken(tokenString, app.Secret)
+	app, err := a.appProvider.App(ctx, appID)
 	if err != nil {
-		if errors.Is(err, jwt.ErrInvalidToken) {
-			log.Warn("invalid token", slog.Any("error", err))
-			return nil, fmt.Errorf("%s: %w", op, ErrInvalidToken)
+		if errors.Is(err, storage.ErrAppNotFound) {
+			log.Warn("app not found", slog.Any("error", err))
+			return nil, fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 		}
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			log.Warn("token expired", slog.Any("error", err))
-			return nil, fmt.Errorf("%s: %w", op, ErrTokenExpired)
-		}
-		log.Error("failed to parse token", slog.Any("error", err))
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	log.Info("token validated successfully",
-		slog.Int64("user_id", claims.UserID),
-		slog.String("email", claims.Email),
-		slog.Int("app_id", claims.AppID),
-		slog.Any("roles", claims.Roles),
-	)
-
-	return claims, nil
+	return a.tokenService.ValidateAccessToken(ctx, tokenString, app.Secret)
 }
 
 func (a *Auth) RequestPasswordReset(ctx context.Context, email string) error {
@@ -229,23 +216,25 @@ func (a *Auth) ChangePassword(ctx context.Context, userID int64, oldPassword, ne
 	panic("implement me")
 }
 
-func (a *Auth) Logout(ctx context.Context, token string) error {
+func (a *Auth) Logout(ctx context.Context, accessToken string) error {
 	const op = "auth.Logout"
 	log := a.log.With(slog.String("op", op))
 
-	claimsUnverified, err := jwt.ParseTokenUnverified(token)
-	if err != nil {
-		log.Warn("failed to parse token unverified", slog.Any("error", err))
-		return fmt.Errorf("%s: %w", op, ErrInvalidToken)
-	}
-
-	app, err := a.appProvider.App(ctx, claimsUnverified.AppID)
-	if err != nil {
-		log.Warn("invalid app id in token", slog.Any("error", err))
+	appID, ok := authctx.AppID(ctx)
+	if !ok {
 		return fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 	}
 
-	claims, err := jwt.ParseToken(token, app.Secret)
+	app, err := a.appProvider.App(ctx, appID)
+	if err != nil {
+		if errors.Is(err, storage.ErrAppNotFound) {
+			log.Warn("app not found", slog.Any("error", err))
+			return fmt.Errorf("%s: %w", op, ErrInvalidAppID)
+		}
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	claims, err := jwt.ParseToken(accessToken, app.Secret)
 	if err != nil {
 		if errors.Is(err, jwt.ErrInvalidToken) {
 			log.Warn("attempted to logout with an invalid token", slog.Any("error", err))
@@ -262,12 +251,12 @@ func (a *Auth) Logout(ctx context.Context, token string) error {
 	if claims.ID == "" || claims.ExpiresAt == nil {
 		log.Warn(
 			"token missing JTI or ExpiresAt, cannot revoke",
-			slog.String("token_str_prefix", token[:10]+"..."),
+			slog.String("token_str_prefix", accessToken[:10]+"..."),
 		)
 		return fmt.Errorf("%s: %w", op, ErrInvalidToken)
 	}
 
-	err = a.tokenSaver.RevokeAccessToken(ctx, claims.ID, claims.ExpiresAt.Unix())
+	err = a.tokenService.RevokeAccessToken(ctx, accessToken, app.Secret)
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			return nil
@@ -285,4 +274,8 @@ func (a *Auth) Logout(ctx context.Context, token string) error {
 		slog.String("jti", claims.ID),
 	)
 	return nil
+}
+
+func (a *Auth) RefreshTokens(ctx context.Context, refreshToken string) (string, string, error) {
+	return a.tokenService.RefreshTokens(ctx, refreshToken)
 }

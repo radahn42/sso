@@ -12,13 +12,13 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-func (s *Storage) SaveRefreshToken(ctx context.Context, userID int64, token string, expiresAt int64) (int64, error) {
+func (s *Storage) SaveRefreshToken(ctx context.Context, userID int64, appID int, token string, expiresAt int64) (int64, error) {
 	const op = "storage.sqlite.SaveRefreshToken"
 
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO refresh_tokens (user_id, token, expires_at)
-		VALUES (?, ?, ?)`,
-		userID, token, expiresAt,
+		INSERT INTO refresh_tokens (user_id, app_id, token, expires_at)
+		VALUES (?, ?, ?, ?)`,
+		userID, appID, token, expiresAt,
 	)
 	if err != nil {
 		var sqliteErr *sqlite.Error
@@ -116,13 +116,13 @@ func (s *Storage) IsAccessTokenRevoked(ctx context.Context, jti string) (bool, e
 	return revoked, nil
 }
 
-func (s *Storage) RefreshToken(ctx context.Context, token string) (*models.RefreshToken, error) {
+func (s *Storage) GetRefreshToken(ctx context.Context, token string) (*models.RefreshToken, error) {
 	const op = "storage.sqlite.RefreshToken"
 
 	var rt models.RefreshToken
 	err := s.db.QueryRowContext(ctx, `SELECT user_id, token, expires_at
 		FROM refresh_tokens
-		WHERE token = $1`, token).Scan(
+		WHERE token = ?`, token).Scan(
 		&rt.UserID,
 		&rt.Token,
 		&rt.ExpiresAt,

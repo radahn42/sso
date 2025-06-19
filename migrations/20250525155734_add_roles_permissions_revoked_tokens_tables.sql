@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- Таблица для ролей
+-- Таблица ролей
 CREATE TABLE IF NOT EXISTS roles
 (
     id          INTEGER PRIMARY KEY,
@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS roles
     description TEXT
 );
 
--- Таблица для разрешений
+-- Таблица разрешений
 CREATE TABLE IF NOT EXISTS permissions
 (
     id          INTEGER PRIMARY KEY,
@@ -36,15 +36,17 @@ CREATE TABLE IF NOT EXISTS user_roles
     FOREIGN KEY (role_id) REFERENCES roles (id) ON DELETE CASCADE
 );
 
--- Таблица Refresh токенов
+-- Таблица refresh токенов
 CREATE TABLE IF NOT EXISTS refresh_tokens
 (
     id         INTEGER PRIMARY KEY,
     user_id    INTEGER NOT NULL,
+    app_id     INTEGER NOT NULL,
     token      TEXT    NOT NULL UNIQUE,
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY (app_id) REFERENCES apps (id) ON DELETE CASCADE
 );
 
 -- Таблица отозванных JWT токенов (черный список)

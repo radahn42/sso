@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/radahn42/sso/internal/config"
+	"github.com/radahn42/sso/internal/lib/authctx"
 	"log/slog"
 	"time"
 
@@ -14,13 +16,13 @@ import (
 )
 
 var (
-	ErrInvalidToken = jwt.ErrInvalidToken
-	ErrTokenExpired = jwt.ErrTokenExpired
+	ErrInvalidToken = errors.New("invalid token")
+	ErrTokenExpired = errors.New("token is expired")
 	ErrTokenRevoked = errors.New("token revoked")
 )
 
 type Saver interface {
-	SaveRefreshToken(ctx context.Context, userID int64, token string, expiresAt int64) (int64, error)
+	SaveRefreshToken(ctx context.Context, userID int64, appID int, token string, expiresAt int64) (int64, error)
 	DeleteRefreshToken(ctx context.Context, token string) error
 	DeleteUserTokens(ctx context.Context, userID int64) error
 	RevokeAccessToken(ctx context.Context, jti string, expiresAt int64) error
@@ -28,63 +30,86 @@ type Saver interface {
 
 type Provider interface {
 	IsAccessTokenRevoked(ctx context.Context, jti string) (bool, error)
-	RefreshToken(ctx context.Context, token string) (*models.RefreshToken, error)
+	GetRefreshToken(ctx context.Context, token string) (*models.RefreshToken, error)
+}
+
+type UserProvider interface {
+	UserByID(ctx context.Context, userID int64) (models.User, error)
+}
+
+type RoleProvider interface {
+	UserRoles(ctx context.Context, userID int64) ([]models.Role, error)
+}
+
+type AppProvider interface {
+	App(ctx context.Context, appID int) (models.App, error)
 }
 
 type Service struct {
-	log             *slog.Logger
-	saver           Saver
-	provider        Provider
-	accessTokenTTL  time.Duration
-	refreshTokenTTL time.Duration
+	log          *slog.Logger
+	cfg          *config.Config
+	saver        Saver
+	provider     Provider
+	userProvider UserProvider
+	roleProvider RoleProvider
+	appProvider  AppProvider
 }
 
 func New(
 	log *slog.Logger,
+	cfg *config.Config,
 	saver Saver,
 	provider Provider,
-	accessTokenTTL time.Duration,
-	refreshTokenTTL time.Duration,
+	userProvider UserProvider,
+	roleProvider RoleProvider,
+	appProvider AppProvider,
 ) *Service {
 	return &Service{
-		log:             log,
-		saver:           saver,
-		provider:        provider,
-		accessTokenTTL:  accessTokenTTL,
-		refreshTokenTTL: refreshTokenTTL,
+		log:          log,
+		cfg:          cfg,
+		saver:        saver,
+		provider:     provider,
+		userProvider: userProvider,
+		roleProvider: roleProvider,
+		appProvider:  appProvider,
 	}
 }
 
 func (s *Service) GenerateTokens(
 	ctx context.Context,
-	user models.User,
-	app models.App,
-	roles []string,
+	payload Payload,
 ) (accessToken, refreshToken string, err error) {
 	const op = "token.GenerateTokens"
 	log := s.log.With(
 		slog.String("op", op),
-		slog.Int64("user_id", user.ID),
-		slog.String("app_name", app.Name),
+		slog.Int64("user_id", payload.UserID),
+		slog.Int("app_id", payload.AppID),
 	)
 
-	accessToken, err = jwt.NewToken(user, app, roles, s.accessTokenTTL)
+	accessToken, err = jwt.NewToken(
+		payload.UserID,
+		payload.Email,
+		payload.AppID,
+		payload.Roles,
+		payload.Secret,
+		s.cfg.AccessTokenTTL,
+	)
 	if err != nil {
 		log.Error("failed to generate access token", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	refreshToken = uuid.NewString()
-	expiresAt := time.Now().Add(s.refreshTokenTTL).Unix()
+	expiresAt := time.Now().Add(s.cfg.RefreshTokenTTL).Unix()
 
-	_, err = s.saver.SaveRefreshToken(ctx, user.ID, refreshToken, expiresAt)
+	_, err = s.saver.SaveRefreshToken(ctx, payload.UserID, payload.AppID, refreshToken, expiresAt)
 	if err != nil {
 		log.Error("failed to save refresh token", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	log.Info("tokens generated successfully")
-	return
+	return accessToken, refreshToken, nil
 }
 
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenStr, appSecret string) (*models.UserClaims, error) {
@@ -200,46 +225,83 @@ func (s *Service) RevokeAllRefreshTokens(ctx context.Context, userID int64) erro
 	return nil
 }
 
-func (s *Service) RefreshTokens(
-	ctx context.Context,
-	refreshToken string,
-	app models.App,
-	user models.User,
-	roles []string,
-) (newAccessToken, newRefreshToken string, err error) {
+func (s *Service) RefreshTokens(ctx context.Context, refreshToken string) (newAccessToken, newRefreshToken string, err error) {
 	const op = "token.RefreshTokens"
-	log := s.log.With(
-		slog.String("op", op),
-		slog.Int64("user_id", user.ID),
-		slog.String("app_name", app.Name),
-	)
+	log := s.log.With(slog.String("op", op))
 
-	rt, err := s.provider.RefreshToken(ctx, refreshToken)
+	log.Info("starting token refresh process")
+
+	rt, err := s.provider.GetRefreshToken(ctx, refreshToken)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			log.Warn("refresh token not found", slog.String("token_prefix", refreshToken[:5]+"..."))
-			return "", "", fmt.Errorf("%s: %w", op, ErrInvalidToken)
-		}
-		log.Error("failed to get refresh token", slog.Any("error", err))
+		log.Error("failed to get refresh token from storage", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	if time.Now().Unix() > rt.ExpiresAt {
-		log.Warn("refresh token expired")
+		log.Warn("refresh token expired", slog.Int64("expires_at", rt.ExpiresAt))
 		return "", "", fmt.Errorf("%s: %w", op, ErrTokenExpired)
 	}
 
-	if err := s.saver.DeleteRefreshToken(ctx, refreshToken); err != nil {
-		log.Error("failed to delete old refresh token", slog.Any("error", err))
+	payload, err := s.buildPayload(ctx, rt.UserID)
+	if err != nil {
+		log.Error("failed to build payload", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	newAccessToken, newRefreshToken, err = s.GenerateTokens(ctx, user, app, roles)
+	newAccessToken, newRefreshToken, err = s.GenerateTokens(ctx, payload)
 	if err != nil {
 		log.Error("failed to generate new tokens", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	log.Info("tokens refreshed successfully")
-	return newAccessToken, newRefreshToken, nil
+	err = s.saver.DeleteRefreshToken(ctx, refreshToken)
+	if err != nil {
+		log.Error("failed to delete old refresh token", slog.Any("error", err))
+		return "", "", fmt.Errorf("%s: %w", op, err)
+	}
+
+	log.Info("tokens refreshed successfully", slog.Int64("user_id", rt.UserID))
+	return
+}
+
+func (s *Service) buildPayload(ctx context.Context, userID int64) (Payload, error) {
+	const op = "token.buildPayload"
+	log := s.log.With(slog.String("op", op), slog.Int64("user_id", userID))
+
+	user, err := s.userProvider.UserByID(ctx, userID)
+	if err != nil {
+		log.Error("failed to get user by ID", slog.Any("error", err))
+		return Payload{}, fmt.Errorf("%s: %w", op, err)
+	}
+
+	appID, ok := authctx.AppID(ctx)
+	if !ok {
+		log.Error("failed to get app ID from context")
+		return Payload{}, fmt.Errorf("%s: failed to get app ID from ctx", op)
+	}
+
+	app, err := s.appProvider.App(ctx, appID)
+	if err != nil {
+		log.Error("failed to get app", slog.Any("error", err))
+		return Payload{}, fmt.Errorf("%s: %w", op, err)
+	}
+
+	roles, err := s.roleProvider.UserRoles(ctx, user.ID)
+	if err != nil {
+		log.Error("failed to get user roles", slog.Any("error", err))
+		return Payload{}, fmt.Errorf("%s: %w", op, err)
+	}
+
+	roleNames := make([]string, 0, len(roles))
+	for _, role := range roles {
+		roleNames = append(roleNames, role.Name)
+	}
+
+	return Payload{
+		UserID: user.ID,
+		Email:  user.Email,
+		AppID:  app.ID,
+		Roles:  roleNames,
+		Secret: app.Secret,
+	}, nil
 }

@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"github.com/radahn42/sso/internal/lib/authctx"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -24,8 +25,6 @@ type PermissionProvider interface {
 type TokenProvider interface {
 	ValidateAccessToken(ctx context.Context, tokenStr, appSecret string) (*models.UserClaims, error)
 }
-
-type userCtxKey struct{}
 
 func AuthInterceptor(
 	log *slog.Logger,
@@ -101,7 +100,8 @@ func AuthInterceptor(
 			}
 		}
 
-		newCtx := context.WithValue(ctx, userCtxKey{}, userID)
+		newCtx := authctx.SetAppID(ctx, appID)
+		newCtx = authctx.SetUserID(newCtx, userID)
 
 		return handler(newCtx, req)
 	}

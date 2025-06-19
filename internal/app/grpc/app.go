@@ -2,6 +2,7 @@ package grpcapp
 
 import (
 	"fmt"
+	"github.com/radahn42/sso/internal/config"
 	"log/slog"
 	"net"
 
@@ -22,15 +23,13 @@ type App struct {
 
 func New(
 	log *slog.Logger,
+	cfg *config.Config,
 	authService authgrpc.Service,
 	roleService authgrpc.RoleService,
 	permService authgrpc.PermissionService,
-	tokenService authgrpc.TokenService,
 	appProvider interceptor.AppProvider,
 	permProvider interceptor.PermissionProvider,
 	tokenProvider interceptor.TokenProvider,
-	port int,
-	host string,
 ) *App {
 	validator, err := protovalidate.New()
 	if err != nil {
@@ -56,13 +55,13 @@ func New(
 		),
 	)
 
-	authgrpc.Register(gRPCServer, authService, roleService, permService, tokenService)
+	authgrpc.Register(gRPCServer, authService, roleService, permService)
 
 	return &App{
 		log:        log,
 		gRPCServer: gRPCServer,
-		port:       port,
-		host:       host,
+		port:       cfg.GRPC.Port,
+		host:       cfg.GRPC.Host,
 	}
 }
 
