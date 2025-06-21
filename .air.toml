@@ -4,8 +4,8 @@ tmp_dir = "tmp"
 
 [build]
 args_bin = ["--config", "./config/local.yaml"]
-bin = "tmp/main"
-cmd = "go build -o ./tmp/main ./cmd/sso"
+bin = "tmp/main.exe"
+cmd = "go build -o ./tmp/main.exe ./cmd/sso"
 delay = 1000
 exclude_dir = ["assets", "tmp", "vendor", "testdata"]
 exclude_file = []

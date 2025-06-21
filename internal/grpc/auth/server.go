@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"github.com/radahn42/sso/internal/lib/authctx"
 
 	"github.com/radahn42/sso/internal/services/token"
 
@@ -16,13 +17,13 @@ import (
 
 type Service interface {
 	RegisterUser(ctx context.Context, email string, password string) (userID int64, err error)
-	Login(ctx context.Context, email string, password string, appID int) (token string, err error)
+	Login(ctx context.Context, email string, password string, appID int) (accessToken, refreshToken string, err error)
 	Logout(ctx context.Context, token string) error
 	RequestPasswordReset(ctx context.Context, email string) error
 	ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error
 	ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error
 	ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error)
-	RefreshTokens(ctx context.Context, refreshToken string) (newAccessToken, newRefreshToken string, err error)
+	RefreshTokens(ctx context.Context, refreshToken string, appID int) (newAccessToken, newRefreshToken string, err error)
 }
 
 type RoleService interface {
@@ -65,7 +66,7 @@ func Register(gRPC *grpc.Server, authService Service, roleService RoleService, p
 }
 
 func (s *serverAPI) Login(ctx context.Context, req *ssov1.LoginRequest) (*ssov1.LoginResponse, error) {
-	accessToken, err := s.authService.Login(ctx, req.GetEmail(), req.GetPassword(), int(req.GetAppId()))
+	accessToken, refreshToken, err := s.authService.Login(ctx, req.GetEmail(), req.GetPassword(), int(req.GetAppId()))
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid credentials")
@@ -73,7 +74,7 @@ func (s *serverAPI) Login(ctx context.Context, req *ssov1.LoginRequest) (*ssov1.
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	return &ssov1.LoginResponse{AccessToken: accessToken}, nil
+	return &ssov1.LoginResponse{AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
 func (s *serverAPI) Register(ctx context.Context, req *ssov1.RegisterRequest) (*ssov1.RegisterResponse, error) {
@@ -105,7 +106,7 @@ func (s *serverAPI) ConfirmPasswordReset(ctx context.Context, req *ssov1.Confirm
 }
 
 func (s *serverAPI) ChangePassword(ctx context.Context, req *ssov1.ChangePasswordRequest) (*ssov1.ChangePasswordResponse, error) {
-	userID, ok := ctx.Value("userID").(int64) // TODO: Сейчас id не пробрасывается в ctx, добавить это в будущем
+	userID, ok := authctx.UserID(ctx)
 	if !ok {
 		return nil, status.Errorf(codes.Unauthenticated, "user not authenticated or ID not found in context")
 	}
@@ -351,7 +352,12 @@ func (s *serverAPI) ValidateToken(ctx context.Context, req *ssov1.ValidateTokenR
 }
 
 func (s *serverAPI) RefreshTokens(ctx context.Context, req *ssov1.RefreshTokensRequest) (*ssov1.RefreshTokensResponse, error) {
-	accessToken, refreshToken, err := s.authService.RefreshTokens(ctx, req.GetRefreshToken())
+	appID, ok := authctx.AppID(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "missing app ID in context")
+	}
+
+	accessToken, refreshToken, err := s.authService.RefreshTokens(ctx, req.GetRefreshToken(), appID)
 	if err != nil {
 		if errors.Is(err, token.ErrInvalidToken) {
 			return nil, status.Errorf(codes.Unauthenticated, "invalid refresh token")

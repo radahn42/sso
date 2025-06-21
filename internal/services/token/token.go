@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/radahn42/sso/internal/config"
-	"github.com/radahn42/sso/internal/lib/authctx"
 	"log/slog"
 	"time"
 
@@ -225,7 +224,7 @@ func (s *Service) RevokeAllRefreshTokens(ctx context.Context, userID int64) erro
 	return nil
 }
 
-func (s *Service) RefreshTokens(ctx context.Context, refreshToken string) (newAccessToken, newRefreshToken string, err error) {
+func (s *Service) RefreshTokens(ctx context.Context, refreshToken string, appID int) (newAccessToken, newRefreshToken string, err error) {
 	const op = "token.RefreshTokens"
 	log := s.log.With(slog.String("op", op))
 
@@ -242,7 +241,7 @@ func (s *Service) RefreshTokens(ctx context.Context, refreshToken string) (newAc
 		return "", "", fmt.Errorf("%s: %w", op, ErrTokenExpired)
 	}
 
-	payload, err := s.buildPayload(ctx, rt.UserID)
+	payload, err := s.buildPayload(ctx, rt.UserID, appID)
 	if err != nil {
 		log.Error("failed to build payload", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
@@ -264,20 +263,16 @@ func (s *Service) RefreshTokens(ctx context.Context, refreshToken string) (newAc
 	return
 }
 
-func (s *Service) buildPayload(ctx context.Context, userID int64) (Payload, error) {
+func (s *Service) buildPayload(ctx context.Context, userID int64, appID int) (Payload, error) {
 	const op = "token.buildPayload"
 	log := s.log.With(slog.String("op", op), slog.Int64("user_id", userID))
+
+	log.Info("Inspecting context before extracting appID", slog.Any("context", ctx))
 
 	user, err := s.userProvider.UserByID(ctx, userID)
 	if err != nil {
 		log.Error("failed to get user by ID", slog.Any("error", err))
 		return Payload{}, fmt.Errorf("%s: %w", op, err)
-	}
-
-	appID, ok := authctx.AppID(ctx)
-	if !ok {
-		log.Error("failed to get app ID from context")
-		return Payload{}, fmt.Errorf("%s: failed to get app ID from ctx", op)
 	}
 
 	app, err := s.appProvider.App(ctx, appID)

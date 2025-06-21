@@ -39,17 +39,19 @@ func New(
 	gRPCServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			interceptor.AuthInterceptor(log, appProvider, permProvider, tokenProvider, map[string][]string{
-				"/auth.AuthService/ChangePassword": {"password:change"},
-				"/auth.AuthService/Logout":         {}, // Просто валидный токен
+				"/sso.v1.AuthService/ChangePassword": {"password:change"},
+				"/sso.v1.AuthService/Logout":         {}, // Просто валидный токен
 
-				"/auth.AuthService/AssignRoleToUser":   {"user_roles:assign"},
-				"/auth.AuthService/RevokeRoleFromUser": {"user_roles:revoke"},
-				"/auth.AuthService/GetUserRoles":       {"user_roles:read"},
+				"/sso.v1.AuthService/AssignRoleToUser":   {"user_roles:assign"},
+				"/sso.v1.AuthService/RevokeRoleFromUser": {"user_roles:revoke"},
+				"/sso.v1.AuthService/GetUserRoles":       {"user_roles:read"},
 
-				"/auth.AuthService/GetAllRoles": {"roles:read"},
-				"/auth.AuthService/CreateRole":  {"roles:create"},
-				"/auth.AuthService/DeleteRole":  {"roles:delete"},
-				"/auth.AuthService/UpdateRole":  {"roles:update"},
+				"/sso.v1.AuthService/GetAllRoles": {"roles:read"},
+				"/sso.v1.AuthService/CreateRole":  {"roles:create"},
+				"/sso.v1.AuthService/DeleteRole":  {"roles:delete"},
+				"/sso.v1.AuthService/UpdateRole":  {"roles:update"},
+
+				"/sso.v1.AuthService/RefreshTokens": {},
 			}),
 			protovalidate_middleware.UnaryServerInterceptor(validator),
 		),
@@ -88,7 +90,7 @@ func (a *App) Run() error {
 
 	log.Info("gRPC server is running", slog.String("addr", l.Addr().String()))
 
-	if err := a.gRPCServer.Serve(l); err != nil {
+	if err = a.gRPCServer.Serve(l); err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 

@@ -103,6 +103,8 @@ func AuthInterceptor(
 		newCtx := authctx.SetAppID(ctx, appID)
 		newCtx = authctx.SetUserID(newCtx, userID)
 
+		log.Info("Inspecting context after set in interceptor", slog.Any("context", newCtx))
+
 		return handler(newCtx, req)
 	}
 }
