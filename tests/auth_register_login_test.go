@@ -1,14 +1,15 @@
 package tests
 
 import (
+	"testing"
+	"time"
+
 	"github.com/brianvoe/gofakeit/v7"
 	"github.com/golang-jwt/jwt/v5"
-	ssov1 "github.com/radahn42/protos/gen/proto/sso"
+	ssov1 "github.com/radahn42/protos/gen/sso/v1"
 	"github.com/radahn42/sso/tests/suite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 const (
@@ -41,7 +42,7 @@ func TestRegisterLogin_HappyPath(t *testing.T) {
 
 	loginTime := time.Now()
 
-	token := respLogin.GetToken()
+	token := respLogin.GetAccessToken()
 	assert.NotEmpty(t, token)
 
 	tokenParsed, err := jwt.Parse(token, func(token *jwt.Token) (any, error) {
@@ -67,7 +68,7 @@ func TestRegisterLogin_HappyPath(t *testing.T) {
 
 	const deltaSeconds = 1
 
-	assert.InDelta(t, loginTime.Add(st.Cfg.TokenTTL).Unix(), claims["exp"], deltaSeconds)
+	assert.InDelta(t, loginTime.Add(st.Cfg.AccessTokenTTL).Unix(), claims["exp"], deltaSeconds)
 }
 
 func TestLoginWithNonExistentApp_ShouldFail(t *testing.T) {
