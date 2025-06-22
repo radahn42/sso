@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/storage"
@@ -135,4 +136,67 @@ func (s *Storage) GetRefreshToken(ctx context.Context, token string) (*models.Re
 	}
 
 	return &rt, nil
+}
+
+func (s *Storage) SavePasswordResetToken(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error {
+	const op = "storage.sqlite.SavePasswordResetToken"
+
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
+		userID, tokenHash, expiresAt,
+	)
+	if err != nil {
+		var sqliteErr *sqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+			return fmt.Errorf("%s: token already exists (hash collision?): %w", op, err)
+		}
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	return nil
+}
+
+func (s *Storage) GetPasswordResetToken(ctx context.Context, tokenHash []byte) (int64, time.Time, error) {
+	const op = "storage.sqlite.GetPasswordResetToken"
+
+	var (
+		userID    int64
+		expiresAt int64
+	)
+	err := s.db.QueryRowContext(ctx,
+		"SELECT user_id, expires_at  FROM password_reset_tokens WHERE token_hash = ?", tokenHash,
+	).Scan(&userID, &expiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, time.Time{}, fmt.Errorf("%s: %w", op, storage.ErrResetTokenNotFound)
+		}
+	}
+
+	if time.Now().Unix() > expiresAt {
+		_ = s.DeletePasswordResetToken(ctx, tokenHash)
+		return 0, time.Time{}, fmt.Errorf("%s: %w", op, storage.ErrResetTokenExpired)
+	}
+
+	return userID, time.Unix(expiresAt, 0), nil
+}
+
+func (s *Storage) DeletePasswordResetToken(ctx context.Context, tokenHash []byte) error {
+	const op = "storage.sqlite.DeletePasswordResetToken"
+
+	res, err := s.db.ExecContext(ctx,
+		"DELETE FROM password_reset_tokens WHERE token_hash = ?", tokenHash,
+	)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%s: %w", op, storage.ErrResetTokenNotFound)
+	}
+
+	return nil
 }

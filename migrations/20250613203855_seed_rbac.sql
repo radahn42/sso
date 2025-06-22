@@ -40,7 +40,7 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
 
 -- Create initial admin user
 INSERT INTO users (id, email, pass_hash)
-VALUES (1, 'admin@example.com', '$2a$10$gbh/JHR/5Av3SLPCfhz3mOTCT/fgNpbivnBtDZMk/ncU9j2xmJWmW'); -- recommended to generate it with hasher (cmd/hasher)
+VALUES (1, 'admin@example.com', '$2a$10$zs2Mnb0CsB6FTskiMFuNUe49HI6uFoCEx1OJ8tjfoPm4SX/M05KxK'); -- recommended to generate it with hasher (cmd/hasher)
 
 -- Assign admin role to initial user
 INSERT INTO user_roles (user_id, role_id) VALUES (1, 1);
