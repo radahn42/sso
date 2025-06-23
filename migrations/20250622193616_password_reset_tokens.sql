@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens
 
 -- +goose Down
 -- +goose StatementBegin
-SELECT 'down SQL query';
+DROP TABLE IF EXISTS password_reset_tokens;
 -- +goose StatementEnd
