@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
 	"github.com/radahn42/sso/internal/domain/models"
 	"github.com/radahn42/sso/internal/storage"
 	"modernc.org/sqlite"

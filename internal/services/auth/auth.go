@@ -52,7 +52,7 @@ type TokenService interface {
 	RefreshTokens(ctx context.Context, refreshToken string, appID int) (newAccessToken, newRefreshToken string, err error)
 }
 
-type Auth struct {
+type Service struct {
 	log          *slog.Logger
 	usrSaver     UserSaver
 	usrProvider  UserProvider
@@ -62,7 +62,7 @@ type Auth struct {
 	tokenService TokenService
 }
 
-// New returns a new instance of the Auth service.
+// New returns a new instance of the Service.
 func New(
 	log *slog.Logger,
 	usrSaver UserSaver,
@@ -71,8 +71,8 @@ func New(
 	roleProvider RoleProvider,
 	permProvider PermissionProvider,
 	tokenService TokenService,
-) *Auth {
-	return &Auth{
+) *Service {
+	return &Service{
 		log:          log,
 		usrSaver:     usrSaver,
 		usrProvider:  usrProvider,
@@ -84,34 +84,34 @@ func New(
 }
 
 // Login checks if user with given credentials exists in the system and returns a JWT token.
-func (a *Auth) Login(ctx context.Context, email string, password string, appID int) (string, string, error) {
+func (s *Service) Login(ctx context.Context, email string, password string, appID int) (string, string, error) {
 	const op = "auth.Login"
 
-	log := a.log.With(
+	log := s.log.With(
 		slog.String("op", op),
 		slog.String("email", email),
 	)
 	log.Info("attempting to login user")
 
-	user, err := a.usrProvider.User(ctx, email)
+	user, err := s.usrProvider.User(ctx, email)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
-			a.log.Warn("user not found", slog.Any("error", err))
+			s.log.Warn("user not found", slog.Any("error", err))
 			return "", "", fmt.Errorf("%s: %w", op, ErrUserNotFound)
 		}
-		a.log.Error("failed to get user", slog.Any("error", err))
+		s.log.Error("failed to get user", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword(user.PassHash, []byte(password)); err != nil {
-		a.log.Info("invalid credentials", slog.Any("error", err))
+		s.log.Info("invalid credentials", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, ErrInvalidCredentials)
 	}
 
-	app, err := a.appProvider.App(ctx, appID)
+	app, err := s.appProvider.App(ctx, appID)
 	if err != nil {
 		if errors.Is(err, storage.ErrAppNotFound) {
-			a.log.Warn("app not found", slog.Any("error", err))
+			s.log.Warn("app not found", slog.Any("error", err))
 
 			return "", "", fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 		}
@@ -119,9 +119,9 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	userRoles, err := a.roleProvider.UserRoles(ctx, user.ID)
+	userRoles, err := s.roleProvider.UserRoles(ctx, user.ID)
 	if err != nil {
-		a.log.Error("failed to get user roles for JWT claims", slog.Any("error", err))
+		s.log.Error("failed to get user roles for JWT claims", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: failed to get user roles: %w", op, err)
 	}
 	roleNames := make([]string, 0, len(userRoles))
@@ -131,7 +131,7 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 
 	log.Info("user logged in successfully")
 
-	accessToken, refreshToken, err := a.tokenService.GenerateTokens(ctx, token.Payload{
+	accessToken, refreshToken, err := s.tokenService.GenerateTokens(ctx, token.Payload{
 		UserID: user.ID,
 		AppID:  appID,
 		Email:  email,
@@ -139,7 +139,7 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 		Secret: app.Secret,
 	})
 	if err != nil {
-		a.log.Error("failed to generate token", slog.Any("error", err))
+		s.log.Error("failed to generate token", slog.Any("error", err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
@@ -147,10 +147,10 @@ func (a *Auth) Login(ctx context.Context, email string, password string, appID i
 }
 
 // RegisterUser registers new user in the system and returns user ID.
-func (a *Auth) RegisterUser(ctx context.Context, email string, password string) (int64, error) {
+func (s *Service) RegisterUser(ctx context.Context, email string, password string) (int64, error) {
 	const op = "auth.RegisterUser"
 
-	log := a.log.With(
+	log := s.log.With(
 		slog.String("op", op),
 		slog.String("email", email),
 	)
@@ -162,10 +162,10 @@ func (a *Auth) RegisterUser(ctx context.Context, email string, password string) 
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 
-	id, err := a.usrSaver.SaveUser(ctx, email, passHash)
+	id, err := s.usrSaver.SaveUser(ctx, email, passHash)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserExists) {
-			a.log.Warn("user already exists", slog.Any("error", ErrUserExists))
+			s.log.Warn("user already exists", slog.Any("error", ErrUserExists))
 			return 0, fmt.Errorf("%s: %w", op, err)
 		}
 
@@ -180,16 +180,16 @@ func (a *Auth) RegisterUser(ctx context.Context, email string, password string) 
 // ValidateToken parses and validates a JWT token.
 // It returns models.UserClaims on success.
 // If token is invalid or expired, it returns an appropriate error.
-func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error) {
+func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*models.UserClaims, error) {
 	const op = "auth.ValidateToken"
-	log := a.log.With(slog.String("op", op))
+	log := s.log.With(slog.String("op", op))
 
 	appID, ok := authctx.AppID(ctx)
 	if !ok {
 		return nil, fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 	}
 
-	app, err := a.appProvider.App(ctx, appID)
+	app, err := s.appProvider.App(ctx, appID)
 	if err != nil {
 		if errors.Is(err, storage.ErrAppNotFound) {
 			log.Warn("app not found", slog.Any("error", err))
@@ -198,34 +198,34 @@ func (a *Auth) ValidateToken(ctx context.Context, tokenString string) (*models.U
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	return a.tokenService.ValidateAccessToken(ctx, tokenString, app.Secret)
+	return s.tokenService.ValidateAccessToken(ctx, tokenString, app.Secret)
 }
 
-func (a *Auth) RequestPasswordReset(ctx context.Context, email string) error {
+func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (a *Auth) ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error {
+func (s *Service) ConfirmPasswordReset(ctx context.Context, email, resetToken, newPassword string) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (a *Auth) ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
+func (s *Service) ChangePassword(ctx context.Context, userID int64, oldPassword, newPassword string) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (a *Auth) Logout(ctx context.Context, accessToken string) error {
+func (s *Service) Logout(ctx context.Context, accessToken string) error {
 	const op = "auth.Logout"
-	log := a.log.With(slog.String("op", op))
+	log := s.log.With(slog.String("op", op))
 
 	appID, ok := authctx.AppID(ctx)
 	if !ok {
 		return fmt.Errorf("%s: %w", op, ErrInvalidAppID)
 	}
 
-	app, err := a.appProvider.App(ctx, appID)
+	app, err := s.appProvider.App(ctx, appID)
 	if err != nil {
 		if errors.Is(err, storage.ErrAppNotFound) {
 			log.Warn("app not found", slog.Any("error", err))
@@ -256,7 +256,7 @@ func (a *Auth) Logout(ctx context.Context, accessToken string) error {
 		return fmt.Errorf("%s: %w", op, ErrInvalidToken)
 	}
 
-	err = a.tokenService.RevokeAccessToken(ctx, accessToken, app.Secret)
+	err = s.tokenService.RevokeAccessToken(ctx, accessToken, app.Secret)
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			return nil
@@ -276,6 +276,6 @@ func (a *Auth) Logout(ctx context.Context, accessToken string) error {
 	return nil
 }
 
-func (a *Auth) RefreshTokens(ctx context.Context, refreshToken string, appID int) (string, string, error) {
-	return a.tokenService.RefreshTokens(ctx, refreshToken, appID)
+func (s *Service) RefreshTokens(ctx context.Context, refreshToken string, appID int) (string, string, error) {
+	return s.tokenService.RefreshTokens(ctx, refreshToken, appID)
 }
