@@ -39,19 +39,28 @@ func New(
 	gRPCServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			interceptor.AuthInterceptor(log, appProvider, permProvider, tokenProvider, map[string][]string{
-				"/sso.v1.AuthService/ChangePassword": {"password:change"},
-				"/sso.v1.AuthService/Logout":         {}, // Просто валидный токен
-
-				"/sso.v1.AuthService/AssignRoleToUser":   {"user_roles:assign"},
-				"/sso.v1.AuthService/RevokeRoleFromUser": {"user_roles:revoke"},
-				"/sso.v1.AuthService/GetUserRoles":       {"user_roles:read"},
-
-				"/sso.v1.AuthService/GetAllRoles": {"roles:read"},
-				"/sso.v1.AuthService/CreateRole":  {"roles:create"},
-				"/sso.v1.AuthService/DeleteRole":  {"roles:delete"},
-				"/sso.v1.AuthService/UpdateRole":  {"roles:update"},
-
-				"/sso.v1.AuthService/RefreshTokens": {},
+				"/sso.v1.AuthService/ChangePassword":           {"auth:change_password"},
+				"/sso.v1.AuthService/Logout":                   {"auth:logout"},
+				"/sso.v1.AuthService/AssignRoleToUser":         {"roles:assign"},
+				"/sso.v1.AuthService/RevokeRoleFromUser":       {"roles:revoke"},
+				"/sso.v1.AuthService/GetUserRoles":             {"user_roles:read"},
+				"/sso.v1.AuthService/GetAllRoles":              {"roles:read"},
+				"/sso.v1.AuthService/CreateRole":               {"roles:create"},
+				"/sso.v1.AuthService/DeleteRole":               {"roles:delete"},
+				"/sso.v1.AuthService/UpdateRole":               {"roles:update"},
+				"/sso.v1.AuthService/CreatePermission":         {"permissions:create"},
+				"/sso.v1.AuthService/DeletePermission":         {"permissions:delete"},
+				"/sso.v1.AuthService/UpdatePermission":         {"permissions:update"},
+				"/sso.v1.AuthService/GetPermissionByID":        {"permissions:read"},
+				"/sso.v1.AuthService/GetPermissionByName":      {"permissions:read"},
+				"/sso.v1.AuthService/GetAllPermissions":        {"permissions:read"},
+				"/sso.v1.AuthService/AddPermissionToRole":      {"permissions:update"},
+				"/sso.v1.AuthService/RemovePermissionFromRole": {"permissions:update"},
+				"/sso.v1.AuthService/GetRolePermissions":       {"permissions:read"},
+				"/sso.v1.AuthService/GetUserPermissions":       {"permissions:read"},
+				"/sso.v1.AuthService/HasPermission":            {"permissions:read"},
+				"/sso.v1.AuthService/ValidateToken":            {"tokens:validate"},
+				"/sso.v1.AuthService/RefreshTokens":            {"tokens:refresh"},
 			}),
 			protovalidate_middleware.UnaryServerInterceptor(validator),
 		),
